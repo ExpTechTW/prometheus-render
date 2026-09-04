@@ -2,6 +2,8 @@
 
 從 **Prometheus** 或 **VictoriaMetrics** 直接畫出 RRDtool / MRTG / Munin 風格的圖。
 
+English documentation: [README-EN.md](README-EN.md)
+
 ```
 prometheus-render -q 'node_load1' --from -6h -o load.png
 ```
