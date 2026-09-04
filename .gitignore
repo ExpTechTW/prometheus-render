@@ -1,0 +1,6 @@
+bin/
+__pycache__/
+.DS_Store
+
+# The example generator's binary; the images it writes are tracked.
+examples/gallery/gallery

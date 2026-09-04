@@ -1,0 +1,13 @@
+prometheus-render
+Copyright 2026 ExpTech Studio
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+The tsgraph package draws in the style of RRDtool and MRTG, and uses their
+colour conventions, but implements its own axis and scaling algorithms. The
+vertical scale follows Paul S. Heckbert, "Nice Numbers for Graph Labels",
+Graphics Gems, 1990.
