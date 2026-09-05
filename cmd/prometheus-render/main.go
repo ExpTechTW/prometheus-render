@@ -21,7 +21,6 @@ import (
 	"github.com/ExpTechTW/prometheus-render/internal/params"
 	"github.com/ExpTechTW/prometheus-render/internal/promapi"
 	"github.com/ExpTechTW/prometheus-render/internal/render"
-	"github.com/ExpTechTW/prometheus-render/internal/server"
 	"github.com/ExpTechTW/prometheus-render/tsgraph"
 )
 
@@ -38,8 +37,8 @@ func run(argv []string) error {
 	fs := flag.NewFlagSet("prometheus-render", flag.ContinueOnError)
 	fs.Usage = func() { _, _ = io.WriteString(os.Stderr, usage) }
 
-	// Render settings are collected under the same keys the HTTP API uses, so
-	// both front ends resolve them through the params package.
+	// Render settings are collected under the same keys a config file uses, so
+	// both resolve through the params package.
 	opts := settings{values: url.Values{}}
 	var (
 		baseURL    = strFlag(fs, envOr("PROMETHEUS_URL", "http://localhost:9090"), "url", "u")
@@ -90,22 +89,17 @@ func run(argv []string) error {
 		return nil
 	}
 
+	// Serving means serving a config's graphs. There is no mode in which a
+	// request chooses the query: that would let whoever reaches the page pick
+	// what this process reads.
+	if *serve != "" && *configPath == "" {
+		return errors.New("--serve needs --config: what is served is what the config draws")
+	}
 	if *configPath != "" {
-		return runSite(*configPath)
+		return runSite(*configPath, *serve)
 	}
 
 	client := newClient(*baseURL, *timeout, *user, headers, *insecure)
-
-	if *serve != "" {
-		srv := &server.Server{Client: client, Defaults: params.Defaults{
-			Theme: opts.values.Get("theme"),
-			From:  opts.values.Get("from"),
-			Until: opts.values.Get("until"),
-		}}
-		fmt.Fprintf(os.Stderr, "listening on %s  (try %s/render?target=up&from=-1h)\n",
-			*serve, httpBase(*serve))
-		return srv.ListenAndServe(*serve)
-	}
 
 	if len(opts.values["target"]) == 0 {
 		fs.Usage()

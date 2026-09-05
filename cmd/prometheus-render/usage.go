@@ -8,7 +8,7 @@ config file gives a whole site, redrawn on a timer and presented as plain HTML.
 USAGE
   prometheus-render -q <promql> [flags]
   prometheus-render --config site.yml
-  prometheus-render --serve :8080 [flags]
+  prometheus-render --config site.yml --serve :8080
 
 DATA SOURCE
   -u, --url URL        Prometheus/VictoriaMetrics base URL  (env PROMETHEUS_URL)
@@ -56,10 +56,10 @@ SITE
                        in parallel, one worker per CPU by default.
                        An interval of 0 draws once and exits, for cron.
                        See site.example.yml.
-
-SERVER
-      --serve ADDR     Serve GET /render?target=<promql>&from=-1h&width=400
-                       Most flags above are accepted as URL parameters.
+      --serve ADDR     Serve the drawn pages on ADDR, overriding output.listen.
+                       Requires --config: what is served is what the config
+                       draws. No endpoint accepts a query, so reaching the
+                       pages never means choosing what is read.
 
 EXAMPLES
   # Classic MRTG traffic graph

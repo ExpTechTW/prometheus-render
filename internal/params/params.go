@@ -1,6 +1,6 @@
 // Package params turns a flat set of key/value settings into a query request
-// and render options. The CLI and the HTTP server both go through it, so a flag
-// and its URL parameter cannot drift apart.
+// and render options. The CLI flags and the config file both go through it, so
+// a flag and its config key cannot drift apart.
 package params
 
 import (

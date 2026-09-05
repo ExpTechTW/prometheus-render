@@ -87,7 +87,7 @@ Nothing else to install.
 
 ```sh
 prometheus-render -q <promql> [flags]
-prometheus-render --serve :8080 [flags]
+prometheus-render --config site.yml --serve :8080
 ```
 
 Run `prometheus-render -h` for the full list.
@@ -182,14 +182,20 @@ does not reach the source as one burst. A full example is in
 Images are written through a temporary file and renamed into place, so anyone
 reading the site mid-render never sees half an image.
 
-### Server mode
+### Serving the drawn pages
 
-`--serve` exposes a `/render` endpoint an `<img>` tag can point at. The flags
-above are accepted as URL parameters, with `target` in place of `--query`:
+`--serve` serves the pages that were drawn, overriding `output.listen` in the
+config. It requires `--config`:
 
-```html
-<img src="http://localhost:8080/render?target=node_load1&from=-6h&theme=dark">
+```bash
+prometheus-render --config site.yml --serve :8080
 ```
+
+**What is served is what the config drew; no endpoint accepts a query.** That
+is deliberate. A URL parameter carrying PromQL would let whoever can reach the
+page decide what this process reads and how much it costs to read -- an
+injection surface rather than a feature. To publish another graph, add another
+entry under `graphs`.
 
 `/healthz` returns `ok`.
 
@@ -246,9 +252,8 @@ tsgraph/                the drawing library, usable on its own
 cmd/prometheus-render   CLI
 internal/promapi        query_range client, time parsing, densifying
 internal/query          window and step resolution, parallel fetch
-internal/params         settings shared by the CLI and the server
+internal/params         settings shared by the CLI and the config
 internal/render         joins a query to the library
-internal/server         the /render endpoint
 internal/config         the YAML config file
 internal/site           scheduling, the worker pool and the HTML
 examples/gallery        renders out/ from SQLite (its own module)

@@ -3,6 +3,7 @@ package site
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -302,5 +303,55 @@ func TestRunRedrawsOnTheInterval(t *testing.T) {
 	defer src.mu.Unlock()
 	if src.peak == 0 {
 		t.Error("the timer never fired a render")
+	}
+}
+
+// What is servable is what the config drew. A request must not be able to
+// choose a query, name a metric, or reach outside the output directory.
+func TestHandlerServesOnlyWhatTheConfigDrew(t *testing.T) {
+	s := build(t, newSource(t), 4, 0, "")
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	get := func(path string) (int, string) {
+		t.Helper()
+		resp, err := srv.Client().Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+
+	for _, path := range []string{"/", "/index.html", "/traffic.html", "/traffic/1d.png"} {
+		if code, _ := get(path); code != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", path, code)
+		}
+	}
+	if code, body := get("/healthz"); code != http.StatusOK || !strings.Contains(body, "ok") {
+		t.Errorf("GET /healthz = %d %q", code, body)
+	}
+
+	// No endpoint takes a query, under any of the names one might have had.
+	for _, path := range []string{
+		"/render?target=node_load1&from=-1h",
+		"/render",
+		"/api/v1/query?query=node_load1",
+		"/graph?target=up",
+	} {
+		if code, _ := get(path); code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404: nothing may accept a query", path, code)
+		}
+	}
+
+	// Nor may a request climb out of the output directory.
+	for _, path := range []string{"/../site_test.go", "/..%2fsite.go", "/traffic/../../site.go"} {
+		if code, _ := get(path); code == http.StatusOK {
+			t.Errorf("GET %s = 200, want it refused", path)
+		}
 	}
 }

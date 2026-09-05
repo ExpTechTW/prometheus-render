@@ -75,7 +75,7 @@ make test
 
 ```sh
 prometheus-render -q <promql> [flags]
-prometheus-render --serve :8080 [flags]
+prometheus-render --config site.yml --serve :8080
 ```
 
 完整旗標見 `prometheus-render -h`。
@@ -166,14 +166,17 @@ graphs:
 
 圖片先寫暫存檔再 rename 就位，所以正在看網頁的人不會撞見畫到一半的圖。
 
-### HTTP 服務
+### 服務產出的頁面
 
-`--serve` 開一個 `/render` 端點，可以直接讓 `<img>` 指過來。上面的旗標都能當
-URL 參數用，`target` 對應 `--query`：
+`--serve` 把畫好的頁面服務出來，覆寫設定檔裡的 `output.listen`。它需要 `--config`：
 
-```html
-<img src="http://localhost:8080/render?target=node_load1&from=-6h&theme=dark">
+```bash
+prometheus-render --config site.yml --serve :8080
 ```
+
+**服務出去的就是設定檔畫出來的東西，沒有任何端點接受查詢參數。** 這是刻意的：
+一個吃 PromQL 的 URL 參數，等於讓能連到頁面的人決定這個程式讀什麼、花多少
+成本去讀——那是注入面，不是功能。要多一張圖就在 yml 裡多寫一個 `graphs` 條目。
 
 `/healthz` 回 `ok`。
 
@@ -228,10 +231,9 @@ tsgraph/               繪圖函式庫，可獨立使用
 cmd/prometheus-render   CLI
 internal/promapi        query_range 客戶端、時間解析、稠密化
 internal/query          時間窗與 step 決策、平行抓取
-internal/params         CLI 與 HTTP 共用的參數層
+internal/params         CLI 與設定檔共用的參數層
 internal/render         把查詢結果接到函式庫
-internal/server         /render 端點
-internal/config          yml 設定檔
+internal/config         yml 設定檔
 internal/site           定時繪圖、工作池與 HTML 產生
 examples/gallery        從 SQLite 產生 out/ 的範例程式（獨立 module）
 testdata/sample.db      範例資料

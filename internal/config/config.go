@@ -2,9 +2,9 @@
 // come from, which graphs to draw, and over which timescales.
 //
 // A graph here does not carry its own rendering semantics. Every field is
-// flattened back into the same key/value form the CLI flags and the HTTP
-// parameters already use, and handed to the params package, so a setting means
-// the same thing however it arrives.
+// flattened back into the same key/value form the CLI flags already use, and
+// handed to the params package, so a setting means the same thing whether it
+// arrives on the command line or in a file.
 package config
 
 import (
