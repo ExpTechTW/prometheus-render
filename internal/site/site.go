@@ -1,11 +1,16 @@
 // Package site draws a whole config's worth of graphs and writes the pages
-// that present them, in the shape MRTG made familiar: one row per graph on the
-// front page, and a page per graph showing the same data over widening
-// timescales.
+// that present them, in the shape MRTG made familiar: widening timescales for
+// one thing, and an index onto everything.
 //
-// The work is spread across cores. One image is one job, and the jobs are
-// independent, so a site of eight graphs over four timescales is thirty-two
-// pieces of work rather than one long serial pass.
+// A site split by region is readable both ways round -- everything about one
+// place, or one thing across every place -- and every drawing exists in a
+// light and a dark palette, with and without MRTG's peak traces, so the page
+// can offer those as buttons rather than as separate sites.
+//
+// The work is spread across cores. One fetch is one job, and the jobs are
+// independent, so a site of many graphs is many pieces of work rather than one
+// long serial pass. Each fetch yields several images, because a palette and a
+// peak trace change how samples are drawn, not which samples are read.
 package site
 
 import (
@@ -16,26 +21,45 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/ExpTechTW/prometheus-render/internal/config"
 	"github.com/ExpTechTW/prometheus-render/internal/params"
 	"github.com/ExpTechTW/prometheus-render/internal/promapi"
+	"github.com/ExpTechTW/prometheus-render/internal/query"
 	"github.com/ExpTechTW/prometheus-render/internal/render"
 )
 
-// Site draws the graphs described by a config into a directory.
+// Site draws the graphs a config describes into a directory.
 type Site struct {
 	Cfg    *config.Config
 	Client *promapi.Client
 	Log    *log.Logger
+
+	// regions is what the last pass discovered to split by; drawn records the
+	// pairs that produced images, so the pages list only what exists.
+	mu      sync.Mutex
+	regions []string
+	drawn   map[string]bool
+	noData  map[string]bool
+	failed  map[string]bool
 }
 
-// job is one image: one graph at one timescale.
+// job is one fetch: one graph, in one region, at one timescale.
 type job struct {
-	graph *config.Graph
-	rng   config.Range
+	region string // empty for a graph that is not split
+	graph  *config.Graph
+	rng    config.Range
+}
+
+func (j job) String() string {
+	if j.region == "" {
+		return j.graph.Name + "/" + j.rng.Name
+	}
+	return j.region + "/" + j.graph.Name + "/" + j.rng.Name
 }
 
 // Run draws the site once, then again on every tick until ctx is cancelled.
@@ -67,7 +91,7 @@ func (s *Site) Run(ctx context.Context) error {
 	}
 }
 
-// pass draws every image once and reports how it went.
+// pass draws everything once and reports how it went.
 func (s *Site) pass(ctx context.Context) error {
 	start := time.Now()
 	err := s.Render(ctx)
@@ -76,27 +100,45 @@ func (s *Site) pass(ctx context.Context) error {
 	case ctx.Err() != nil:
 		return nil
 	case err != nil:
-		s.logf("drew %d images with errors in %s: %v", len(s.jobs()), took, err)
+		s.logf("drew with errors in %s: %v", took, err)
 	default:
-		s.logf("drew %d images in %s", len(s.jobs()), took)
+		s.logf("drew %d images from %d queries in %s", s.imageCount(), len(s.jobs()), took)
 	}
 	return err
 }
 
-// Render draws every graph at every timescale and writes the pages.
+// Render draws everything the config asks for and writes the pages.
 func (s *Site) Render(ctx context.Context) error {
+	if s.Cfg.Split() {
+		found, err := s.discover(ctx)
+		if err != nil {
+			return fmt.Errorf("discovering %s: %w", s.Cfg.Regions.Label, err)
+		}
+		s.mu.Lock()
+		s.regions = found
+		s.mu.Unlock()
+	}
+
 	jobs := s.jobs()
 	if len(jobs) == 0 {
 		return errors.New("nothing to draw")
 	}
-	if err := os.MkdirAll(s.Cfg.Output.Dir, 0o755); err != nil {
-		return err
-	}
-	for _, g := range s.Cfg.Graphs {
-		if err := os.MkdirAll(filepath.Join(s.Cfg.Output.Dir, g.Name), 0o755); err != nil {
-			return err
+	for _, j := range jobs {
+		for _, t := range j.graph.Themes() {
+			for _, v := range j.graph.Variants() {
+				dir := filepath.Join(s.Cfg.Output.Dir, filepath.FromSlash(imageDir(j.region, j.graph.Name, t.Name, v)))
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return err
+				}
+			}
 		}
 	}
+
+	s.mu.Lock()
+	s.drawn = map[string]bool{}
+	s.noData = map[string]bool{}
+	s.failed = map[string]bool{}
+	s.mu.Unlock()
 
 	// Errors are collected by index rather than through a channel, so a
 	// failing graph does not stop the others from being drawn.
@@ -141,34 +183,180 @@ func (s *Site) Render(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// jobs lists every image the config asks for, in config order.
+// discover finds the values the site is split by. A value that could reshape a
+// query is dropped with a note rather than used.
+func (s *Site) discover(ctx context.Context) ([]string, error) {
+	found, err := s.Client.LabelValues(ctx, s.Cfg.Regions.Label, s.Cfg.Regions.Match, time.Time{}, time.Time{})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(found))
+	for _, v := range found {
+		if !config.SafeRegion(v) {
+			s.logf("ignoring %s=%q: not usable as a name", s.Cfg.Regions.Label, v)
+			continue
+		}
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// jobs lists every fetch the config asks for, in config order.
 func (s *Site) jobs() []job {
 	var out []job
 	for _, g := range s.Cfg.Graphs {
-		for _, r := range g.Ranges {
-			out = append(out, job{graph: g, rng: r})
+		for _, region := range s.scope(g) {
+			for _, r := range g.Ranges {
+				out = append(out, job{region: region, graph: g, rng: r})
+			}
 		}
 	}
 	return out
 }
 
-// draw resolves one job through the same params layer the CLI and the HTTP
-// endpoint use, then writes the image.
-func (s *Site) draw(ctx context.Context, j job) error {
-	g, err := params.Build(j.graph.Values(j.rng), params.Defaults{}, time.Now())
-	if err != nil {
-		return fmt.Errorf("%s/%s: %w", j.graph.Name, j.rng.Name, err)
+// scope lists the regions a graph is drawn for. A global graph, or any graph
+// on a site that is not split, is drawn once with no region.
+func (s *Site) scope(g *config.Graph) []string {
+	if g.Global || !s.Cfg.Split() {
+		return []string{""}
 	}
-	img, err := render.Draw(ctx, s.Client, g)
-	if err != nil {
-		return fmt.Errorf("%s/%s: %w", j.graph.Name, j.rng.Name, err)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, r := range s.regions {
+		if g.InRegion(r) {
+			out = append(out, r)
+		}
 	}
-	return writeAtomic(filepath.Join(s.Cfg.Output.Dir, imagePath(j.graph.Name, j.rng.Name)), img)
+	return out
 }
 
-// imagePath is where one graph's timescale lives, relative to the output
-// directory. It doubles as the src the pages use.
-func imagePath(graph, rng string) string { return graph + "/" + rng + ".png" }
+// imageCount is how many files a full pass writes.
+func (s *Site) imageCount() int {
+	n := 0
+	for _, j := range s.jobs() {
+		n += len(j.graph.Themes()) * len(j.graph.Variants())
+	}
+	return n
+}
+
+// draw runs one job's query and writes every image it feeds.
+func (s *Site) draw(ctx context.Context, j job) error {
+	// The peaks are separate targets that follow the averages, so one fetch of
+	// the fullest variant covers both: the plain one is the leading groups.
+	widest := config.VariantPlain
+	if j.graph.Peaks() {
+		widest = config.VariantPeak
+	}
+	fetchWith, err := params.Build(
+		j.graph.Values(j.rng, j.region, j.graph.Theme, widest), params.Defaults{}, time.Now())
+	if err != nil {
+		return fmt.Errorf("%s: %w", j, err)
+	}
+
+	grouped, err := render.Fetch(ctx, s.Client, fetchWith)
+	switch {
+	case errors.Is(err, query.ErrNoSeries):
+		// A graph can legitimately have nothing in one region: a sensor that
+		// lives in one place, a node only just added. Say so and carry on
+		// rather than failing the pass, and leave it off the pages.
+		s.logf("no data: %s", j)
+		s.mark(&s.noData, j.region, j.graph.Name)
+		return nil
+	case err != nil:
+		s.mark(&s.failed, j.region, j.graph.Name)
+		return fmt.Errorf("%s: %w", j, err)
+	}
+
+	plainGroups := min(len(j.graph.Series), len(grouped))
+	for _, v := range j.graph.Variants() {
+		data := grouped
+		if v == config.VariantPlain {
+			data = grouped[:plainGroups]
+		}
+		flat := query.Flatten(data)
+		if len(flat) == 0 {
+			continue
+		}
+		for _, t := range j.graph.Themes() {
+			g, err := params.Build(j.graph.Values(j.rng, j.region, t.Theme, v), params.Defaults{}, time.Now())
+			if err != nil {
+				return fmt.Errorf("%s: %w", j, err)
+			}
+			img, err := render.Draw(g, flat)
+			if err != nil {
+				return fmt.Errorf("%s: %w", j, err)
+			}
+			p := filepath.Join(s.Cfg.Output.Dir,
+				filepath.FromSlash(imagePath(j.region, j.graph.Name, t.Name, v, j.rng.Name)))
+			if err := writeAtomic(p, img); err != nil {
+				return err
+			}
+		}
+	}
+
+	s.mark(&s.drawn, j.region, j.graph.Name)
+	return nil
+}
+
+func (s *Site) mark(set *map[string]bool, region, graph string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	(*set)[region+"\x00"+graph] = true
+}
+
+// has reports whether a pair has anything to show.
+//
+// Images left by an earlier pass count, and so does a query that errored: an
+// error means the answer is unknown, so the graph stays listed and its stale
+// or missing image is itself the signal. A pair the source answered for with
+// nothing does not count -- that is a graph which has genuinely gone, not one
+// that failed to refresh.
+func (s *Site) has(region string, g *config.Graph) bool {
+	key := region + "\x00" + g.Name
+	s.mu.Lock()
+	drawn, gone, failed := s.drawn[key], s.noData[key], s.failed[key]
+	s.mu.Unlock()
+	if drawn || failed {
+		return true
+	}
+	if gone || len(g.Ranges) == 0 {
+		return false
+	}
+	p := filepath.Join(s.Cfg.Output.Dir,
+		filepath.FromSlash(imagePath(region, g.Name, "light", config.VariantPlain, g.Ranges[0].Name)))
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// imageBase is the part of an image's path that a page holds on to. The page
+// appends the palette, the variant and the timescale itself, which is how a
+// button can switch between them without another page load.
+func imageBase(region, graph string) string {
+	if region == "" {
+		return graph
+	}
+	return region + "/" + graph
+}
+
+func imageDir(region, graph, theme, variant string) string {
+	return imageBase(region, graph) + "/" + theme + "/" + variant
+}
+
+func imagePath(region, graph, theme, variant, rng string) string {
+	return imageDir(region, graph, theme, variant) + "/" + rng + ".png"
+}
+
+// detailPath is the page showing every timescale of one drawing.
+func detailPath(region, graph string) string {
+	return imageBase(region, graph) + ".html"
+}
+
+// upTo is the prefix a page at the given path needs to reach the site root.
+func upTo(page string) string {
+	return strings.Repeat("../", strings.Count(page, "/"))
+}
 
 // writeAtomic writes through a temporary file in the same directory. A browser
 // fetching the site mid-render then gets either the previous image or the new
@@ -184,6 +372,10 @@ func writeAtomic(path string, b []byte) error {
 	}
 	return nil
 }
+
+// ensureDir makes a page's directory, which the image directories may not have
+// created -- region/ and graph/ hold no images.
+func ensureDir(dir string) error { return os.MkdirAll(dir, 0o755) }
 
 func (s *Site) logf(format string, args ...any) {
 	if s.Log != nil {

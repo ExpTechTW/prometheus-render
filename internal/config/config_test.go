@@ -152,7 +152,7 @@ graphs:
       - {name: 1d, title: "Daily", from: -1d, step: 5m}
 `)
 	g := c.Graphs[0]
-	built, err := params.Build(g.Values(g.Ranges[0]), params.Defaults{}, time.Now())
+	built, err := params.Build(g.Values(g.Ranges[0], "", g.Theme, VariantPlain), params.Defaults{}, time.Now())
 	if err != nil {
 		t.Fatalf("params.Build: %v", err)
 	}
@@ -193,5 +193,65 @@ graphs:
 	}
 	if got := built.Request.ResolveStep(); got != 5*time.Minute {
 		t.Errorf("step = %s", got)
+	}
+}
+
+// Each timescale peaks at the resolution of the one below it. A fixed
+// resolution would make the yearly graph ask for a hundred thousand points per
+// series, which real servers refuse.
+func TestPeaksLadderDownTheTimescales(t *testing.T) {
+	c := parse(t, `
+defaults:
+  peak: true
+  ranges:
+    - {name: 1d, from: -1d,   step: 5m}
+    - {name: 1w, from: -7d,   step: 30m}
+    - {name: 1m, from: -30d,  step: 2h}
+    - {name: 1y, from: -365d, step: 1d}
+graphs:
+  - name: a
+    series: [{expr: up, legend: x}]
+`)
+	g := c.Graphs[0]
+	want := []string{"5m", "5m", "30m", "2h"}
+	for i, r := range g.Ranges {
+		if r.PeakStep != want[i] {
+			t.Errorf("%s peaks over %q, want %q", r.Name, r.PeakStep, want[i])
+		}
+	}
+
+	// And that resolution is what reaches the query.
+	last := g.Ranges[3]
+	targets := g.Values(last, "", g.Theme, VariantPeak)["target"]
+	if len(targets) != 2 {
+		t.Fatalf("targets = %d, want the average and its peak", len(targets))
+	}
+	if got := targets[1]; got != "max_over_time((up)[1d:2h])" {
+		t.Errorf("peak target = %q", got)
+	}
+	// The plain variant asks for the averages alone.
+	if plain := g.Values(last, "", g.Theme, VariantPlain)["target"]; len(plain) != 1 {
+		t.Errorf("plain targets = %v, want just the average", plain)
+	}
+}
+
+func TestPeakStepCanBeOverridden(t *testing.T) {
+	c := parse(t, `
+defaults:
+  peak: true
+  peak_step: 1m
+  ranges:
+    - {name: 1d, from: -1d, step: 5m}
+    - {name: 1w, from: -7d, step: 30m, peak_step: 10m}
+graphs:
+  - name: a
+    series: [{expr: up}]
+`)
+	g := c.Graphs[0]
+	if g.Ranges[0].PeakStep != "1m" {
+		t.Errorf("graph-wide override ignored: %q", g.Ranges[0].PeakStep)
+	}
+	if g.Ranges[1].PeakStep != "10m" {
+		t.Errorf("per-range override ignored: %q", g.Ranges[1].PeakStep)
 	}
 }

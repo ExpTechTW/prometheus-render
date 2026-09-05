@@ -114,7 +114,7 @@ func run(argv []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	img, err := render.Draw(ctx, client, g)
+	img, err := render.FetchAndDraw(ctx, client, g)
 	if err != nil {
 		return err
 	}

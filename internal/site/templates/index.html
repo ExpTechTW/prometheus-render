@@ -1,11 +1,20 @@
 {{template "head" .}}
-{{if not .Graphs}}<p class="empty">No graphs configured.</p>{{end}}
-{{range .Graphs}}
-<figure>
-  <figcaption><a href="{{.Href}}">{{.Title}}</a>
-    {{if .Sub}}<span class="sub">— {{.Sub}}</span>{{end}}
-  </figcaption>
-  <a href="{{.Href}}"><img src="{{.Img}}" alt="{{.Title}}"></a>
-</figure>
+{{if or .Regions .Graphs}}
+<nav class="axes">
+  {{if .Regions}}
+  <div>
+    <h2>By region</h2>
+    <ul>{{range .Regions}}<li><a href="{{$.Up}}{{.Href}}">{{.Title}}</a></li>{{end}}</ul>
+  </div>
+  {{end}}
+  {{if .Graphs}}
+  <div>
+    <h2>By graph</h2>
+    <ul>{{range .Graphs}}<li><a href="{{$.Up}}{{.Href}}">{{.Title}}</a></li>{{end}}</ul>
+  </div>
+  {{end}}
+</nav>
 {{end}}
+{{range .Cards}}{{template "card" .}}{{end}}
+{{if and (not .Regions) (not .Graphs) (not .Cards)}}<p class="empty">Nothing drawn yet.</p>{{end}}
 {{template "foot" .}}

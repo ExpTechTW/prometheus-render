@@ -3,11 +3,14 @@ package site
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,16 +26,24 @@ import (
 // from outside, without reaching into it.
 type countingSource struct {
 	*httptest.Server
-	mu   sync.Mutex
-	now  int
-	peak int
-	fail bool
+	mu     sync.Mutex
+	now    int
+	peak   int
+	fail   bool
+	labels []string // what discovery finds
+	asked  []string // the expressions actually queried
 }
 
 func newSource(t *testing.T) *countingSource {
 	t.Helper()
 	s := &countingSource{}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/label/") {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "success", "data": s.labels,
+			})
+			return
+		}
 		s.enter()
 		// Held briefly so overlapping work genuinely overlaps in time.
 		time.Sleep(20 * time.Millisecond)
@@ -43,6 +54,9 @@ func newSource(t *testing.T) *countingSource {
 			return
 		}
 		_ = r.ParseForm()
+		s.mu.Lock()
+		s.asked = append(s.asked, r.FormValue("query"))
+		s.mu.Unlock()
 		start, _ := strconv.ParseFloat(r.FormValue("start"), 64)
 		end, _ := strconv.ParseFloat(r.FormValue("end"), 64)
 		step, _ := strconv.ParseFloat(r.FormValue("step"), 64)
@@ -79,6 +93,12 @@ func (s *countingSource) leave() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.now--
+}
+
+func (s *countingSource) queries() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.asked...)
 }
 
 func (s *countingSource) maxConcurrent() int {
@@ -143,7 +163,8 @@ func TestRenderWritesAnImagePerGraphAndTimescale(t *testing.T) {
 	}
 
 	for _, name := range []string{
-		"traffic/1d.png", "traffic/1w.png", "load/1d.png", "load/1w.png",
+		"traffic/light/plain/1d.png", "traffic/dark/plain/1d.png",
+		"traffic/light/plain/1w.png", "load/light/plain/1d.png", "load/dark/plain/1w.png",
 		"index.html", "traffic.html", "load.html",
 	} {
 		info, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, name))
@@ -157,13 +178,13 @@ func TestRenderWritesAnImagePerGraphAndTimescale(t *testing.T) {
 	}
 
 	// Nothing may be left behind by the write-then-rename.
-	leftover, _ := filepath.Glob(filepath.Join(s.Cfg.Output.Dir, "*", "*.tmp"))
+	leftover, _ := filepath.Glob(filepath.Join(s.Cfg.Output.Dir, "*", "*", "*", "*.tmp"))
 	if len(leftover) != 0 {
 		t.Errorf("temporary files left behind: %v", leftover)
 	}
 
-	if b := read(t, s, "traffic/1d.png"); !strings.HasPrefix(b, "\x89PNG") {
-		t.Error("traffic/1d.png is not a PNG")
+	if b := read(t, s, "traffic/light/plain/1d.png"); !strings.HasPrefix(b, "\x89PNG") {
+		t.Error("the drawn image is not a PNG")
 	}
 }
 
@@ -185,13 +206,13 @@ func TestPagesLinkEveryImageAndTheRepository(t *testing.T) {
 		t.Error("index.html does not carry the configured title")
 	}
 	// The front page shows the finest timescale and links through, as MRTG does.
-	for _, want := range []string{`src="traffic/1d.png"`, `href="traffic.html"`,
-		`src="load/1d.png"`, `href="load.html"`} {
+	for _, want := range []string{`data-base="traffic"`, `href="traffic.html"`,
+		`data-base="load"`, `href="load.html"`} {
 		if !strings.Contains(index, want) {
 			t.Errorf("index.html is missing %s", want)
 		}
 	}
-	if strings.Contains(index, "1w.png") {
+	if strings.Contains(index, `data-range="1w"`) {
 		t.Error("index.html should show one timescale per graph, not all of them")
 	}
 
@@ -200,7 +221,7 @@ func TestPagesLinkEveryImageAndTheRepository(t *testing.T) {
 		t.Error("traffic.html does not link the repository")
 	}
 	for _, want := range []string{
-		`src="traffic/1d.png"`, `src="traffic/1w.png"`,
+		`data-range="1d"`, `data-range="1w"`,
 		"Daily (5 min average)", "Weekly (30 min average)",
 		`href="index.html"`,
 	} {
@@ -267,7 +288,7 @@ func TestPagesSurviveAFailedQuery(t *testing.T) {
 	if !strings.Contains(index, `href="traffic.html"`) {
 		t.Error("index.html no longer lists the graphs")
 	}
-	if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, "traffic/1d.png")); err == nil {
+	if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, "traffic/light/plain/1d.png")); err == nil {
 		t.Error("a failed query should not leave an image behind")
 	}
 }
@@ -327,7 +348,7 @@ func TestHandlerServesOnlyWhatTheConfigDrew(t *testing.T) {
 		return resp.StatusCode, string(b)
 	}
 
-	for _, path := range []string{"/", "/index.html", "/traffic.html", "/traffic/1d.png"} {
+	for _, path := range []string{"/", "/index.html", "/traffic.html", "/traffic/light/plain/1d.png"} {
 		if code, _ := get(path); code != http.StatusOK {
 			t.Errorf("GET %s = %d, want 200", path, code)
 		}
@@ -354,4 +375,233 @@ func TestHandlerServesOnlyWhatTheConfigDrew(t *testing.T) {
 			t.Errorf("GET %s = 200, want it refused", path)
 		}
 	}
+}
+
+// buildSplit wires a site that is divided by region, discovering the values
+// from the source the way a deployment does.
+func buildSplit(t *testing.T, src *countingSource, extra string) *Site {
+	t.Helper()
+	dir := t.TempDir()
+	cfg, err := config.Parse([]byte(`
+source:
+  url: ` + src.URL + `
+output:
+  dir: ` + dir + `
+  title: Test Site
+  workers: 4
+regions:
+  label: region
+  titles: {tnn: Tainan, tyo: Tokyo}
+defaults:
+  width: 300
+  height: 120
+  peak: true
+  ranges:
+    - {name: 1d, title: Daily, from: -1d, step: 30m}
+graphs:
+  - name: traffic
+    title: HTTP traffic
+    series:
+      - {expr: 'sum(rate(in_total{region="$region"}[5m]))', legend: inbound}
+      - {expr: 'sum(rate(out_total{region="$region"}[5m]))', legend: outbound}
+  - name: lag
+    title: Sensor lag
+    peak: false
+    only_regions: [tnn]
+    series:
+      - {expr: 'lag_seconds{region="$region"}', legend: lag}
+  - name: total
+    title: Every region
+    global: true
+    peak: false
+    series:
+      - {expr: 'sum(rate(in_total[5m]))', legend: inbound}
+` + extra))
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	return &Site{Cfg: cfg, Client: promapi.NewClient(cfg.Source.URL, 10*time.Second)}
+}
+
+func TestRegionsAreDiscoveredAndSubstituted(t *testing.T) {
+	src := newSource(t)
+	src.labels = []string{"tnn", "tyo"}
+	s := buildSplit(t, src, "")
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	// Each region got its own query, with the placeholder filled in.
+	var joined string
+	for _, q := range src.queries() {
+		joined += q + "\n"
+	}
+	for _, want := range []string{`in_total{region="tnn"}`, `in_total{region="tyo"}`} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("no query for %s", want)
+		}
+	}
+	if strings.Contains(joined, "$region") {
+		t.Error("a placeholder reached the source unsubstituted")
+	}
+}
+
+func TestBothViewsExist(t *testing.T) {
+	src := newSource(t)
+	src.labels = []string{"tnn", "tyo"}
+	s := buildSplit(t, src, "")
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	for _, name := range []string{
+		"index.html",
+		"region/tnn.html", "region/tyo.html", // everything about one place
+		"graph/traffic.html", "graph/lag.html", // one thing across places
+		"tnn/traffic.html", "tyo/traffic.html",
+		"total.html", // a global graph keeps the unsplit layout
+	} {
+		if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, name)); err != nil {
+			t.Errorf("missing %s", name)
+		}
+	}
+
+	index := read(t, s, "index.html")
+	for _, want := range []string{"By region", "By graph", "Tainan", "Tokyo", "HTTP traffic"} {
+		if !strings.Contains(index, want) {
+			t.Errorf("index.html is missing %q", want)
+		}
+	}
+	// only_regions keeps a graph out of the regions it does not belong to.
+	if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, "tyo/lag.html")); err == nil {
+		t.Error("lag was drawn for a region it is not in")
+	}
+	if strings.Contains(read(t, s, "region/tyo.html"), "Sensor lag") {
+		t.Error("region/tyo.html lists a graph that is not in that region")
+	}
+	// A global graph belongs to no region.
+	if strings.Contains(read(t, s, "region/tnn.html"), "Every region") {
+		t.Error("a global graph was listed under a region")
+	}
+}
+
+func TestEveryThemeAndVariantIsDrawn(t *testing.T) {
+	src := newSource(t)
+	src.labels = []string{"tnn"}
+	s := buildSplit(t, src, "")
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	// A graph that asks for peaks gets both variants, in both palettes.
+	for _, name := range []string{
+		"tnn/traffic/light/plain/1d.png", "tnn/traffic/light/peak/1d.png",
+		"tnn/traffic/dark/plain/1d.png", "tnn/traffic/dark/peak/1d.png",
+	} {
+		if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, name)); err != nil {
+			t.Errorf("missing %s", name)
+		}
+	}
+	// One that does not keeps only the averages, still in both palettes.
+	if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, "tnn/lag/light/plain/1d.png")); err != nil {
+		t.Errorf("missing the plain lag image: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, "tnn/lag/light/peak/1d.png")); err == nil {
+		t.Error("a graph without peaks should have no peak variant")
+	}
+	if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, "tnn/lag/dark/plain/1d.png")); err != nil {
+		t.Errorf("missing the dark lag image: %v", err)
+	}
+
+	// The peak traces are a second set of targets, and they are asked for.
+	var joined string
+	for _, q := range src.queries() {
+		joined += q + "\n"
+	}
+	if !strings.Contains(joined, "max_over_time((") {
+		t.Error("no peak query was issued")
+	}
+}
+
+// The palette and the peak traces change how samples are drawn, not which are
+// read, so a page's worth of images must not cost a query each.
+func TestVariantsShareOneFetch(t *testing.T) {
+	src := newSource(t)
+	src.labels = []string{"tnn"}
+	s := buildSplit(t, src, "")
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	images := 0
+	_ = filepath.Walk(s.Cfg.Output.Dir, func(p string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() && strings.HasSuffix(p, ".png") {
+			images++
+		}
+		return nil
+	})
+	if queries := len(src.queries()); queries >= images {
+		t.Errorf("%d queries for %d images: the fetch is not being shared", queries, images)
+	}
+}
+
+// Whatever a page points at has to be there, in every palette and variant the
+// buttons can reach.
+func TestEveryImageAPageOffersExists(t *testing.T) {
+	src := newSource(t)
+	src.labels = []string{"tnn", "tyo"}
+	s := buildSplit(t, src, "")
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	root := s.Cfg.Output.Dir
+	imgRE := regexp.MustCompile(`data-base="([^"]+)"\s+data-range="([^"]+)"`)
+	hrefRE := regexp.MustCompile(`href="([^"#:]+\.html)"`)
+	checked := 0
+
+	err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".html") {
+			return err
+		}
+		rel, _ := filepath.Rel(root, p)
+		dir := path.Dir(filepath.ToSlash(rel))
+		body, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+
+		for _, m := range imgRE.FindAllStringSubmatch(string(body), -1) {
+			for _, theme := range []string{"light", "dark"} {
+				for _, variant := range []string{"plain", "peak"} {
+					u := path.Join(dir, m[1], theme, variant, m[2]+".png")
+					// A graph without peaks offers no peak button.
+					if variant == "peak" {
+						if _, e := os.Stat(filepath.Join(root, filepath.FromSlash(
+							path.Join(dir, m[1], "light", "peak", m[2]+".png")))); e != nil {
+							continue
+						}
+					}
+					checked++
+					if _, e := os.Stat(filepath.Join(root, filepath.FromSlash(u))); e != nil {
+						t.Errorf("%s offers %s, which is not there", rel, u)
+					}
+				}
+			}
+		}
+		for _, m := range hrefRE.FindAllStringSubmatch(string(body), -1) {
+			t := path.Join(dir, m[1])
+			if _, e := os.Stat(filepath.Join(root, filepath.FromSlash(t))); e != nil {
+				return fmt.Errorf("%s links %s, which is not there", rel, t)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Error(err)
+	}
+	if checked == 0 {
+		t.Fatal("no images were checked")
+	}
+	t.Logf("checked %d image URLs", checked)
 }

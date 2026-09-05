@@ -1,0 +1,15 @@
+{{template "head" .}}
+<p class="crumb"><a href="{{.Up}}index.html">&larr; {{.SiteTitle}}</a></p>
+<div data-key="{{.Key}}" data-variant="plain">
+  {{if .Peak}}
+  <p><button type="button" data-peak-toggle aria-pressed="false">peak</button></p>
+  {{end}}
+  {{range .Images}}
+  <figure>
+    <figcaption>{{.Title}}</figcaption>
+    <img alt="{{.Title}}" data-base="{{$.Base}}" data-range="{{.Range}}"
+         src="{{$.Base}}/light/plain/{{.Range}}.png">
+  </figure>
+  {{end}}
+</div>
+{{template "foot" .}}
