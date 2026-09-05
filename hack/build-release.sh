@@ -5,11 +5,15 @@
 # The drawing is pure Go with no cgo, so every target cross-compiles from one
 # machine. That is why this is a loop rather than a matrix of CI runners.
 #
-#   hack/build-release.sh v1.0.0 [outdir]
+# Naming targets builds only those, which is how CI produces one downloadable
+# artifact per platform instead of one archive holding all of them.
+#
+#   hack/build-release.sh v1.0.0                     # every target
+#   hack/build-release.sh ci dist linux/amd64        # just the one
 set -euo pipefail
 
-version="${1:-dev}"
-out="${2:-dist}"
+version="${1:-dev}"; [ $# -gt 0 ] && shift
+out="${1:-dist}";    [ $# -gt 0 ] && shift
 pkg=./cmd/prometheus-render
 
 # GOOS/GOARCH, plus an optional GOARM after a second slash.
@@ -22,6 +26,9 @@ targets=(
   openbsd/amd64    openbsd/arm64
   netbsd/amd64
 )
+
+# Anything left on the command line selects a subset.
+[ $# -gt 0 ] && targets=("$@")
 
 sha256() { command -v sha256sum >/dev/null && sha256sum "$@" || shasum -a 256 "$@"; }
 

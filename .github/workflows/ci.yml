@@ -41,8 +41,33 @@ jobs:
 
   # Every target the release builds, built on every change, so a tag never
   # fails on a platform nobody had compiled in months.
+  #
+  # One job per target, so each platform arrives as its own download rather
+  # than one archive holding all eighteen.
   cross-compile:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: linux/amd64, name: linux-x86-64}
+          - {target: linux/arm64, name: linux-arm64}
+          - {target: linux/arm/7, name: linux-armv7}
+          - {target: linux/arm/6, name: linux-armv6}
+          - {target: linux/386, name: linux-i386}
+          - {target: linux/riscv64, name: linux-riscv64}
+          - {target: linux/ppc64le, name: linux-ppc64le}
+          - {target: linux/s390x, name: linux-s390x}
+          - {target: darwin/amd64, name: darwin-x86-64}
+          - {target: darwin/arm64, name: darwin-arm64}
+          - {target: windows/amd64, name: windows-x86-64}
+          - {target: windows/arm64, name: windows-arm64}
+          - {target: windows/386, name: windows-i386}
+          - {target: freebsd/amd64, name: freebsd-x86-64}
+          - {target: freebsd/arm64, name: freebsd-arm64}
+          - {target: openbsd/amd64, name: openbsd-x86-64}
+          - {target: openbsd/arm64, name: openbsd-arm64}
+          - {target: netbsd/amd64, name: netbsd-x86-64}
     steps:
       - uses: actions/checkout@v7
 
@@ -53,13 +78,13 @@ jobs:
 
       # The version is stamped into the binary, so name it after the commit
       # it was built from rather than a bare "ci".
-      - name: Build every target
-        run: hack/build-release.sh "ci-$(git rev-parse --short HEAD)"
+      - name: Build ${{ matrix.target }}
+        run: hack/build-release.sh "ci-$(git rev-parse --short HEAD)" dist "${{ matrix.target }}"
 
-      - name: Upload the builds
+      - name: Upload ${{ matrix.name }}
         uses: actions/upload-artifact@v7
         with:
-          name: prometheus-render-${{ github.sha }}
+          name: ${{ matrix.name }}
           path: dist/
           # The archives are already compressed; zipping them again buys
           # nothing and costs minutes.
