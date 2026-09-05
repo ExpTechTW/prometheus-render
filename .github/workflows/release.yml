@@ -26,6 +26,15 @@ jobs:
       - name: Build every target
         run: hack/build-release.sh "${GITHUB_REF_NAME}"
 
+      # Kept alongside the Release itself, so a failure in the step below does
+      # not mean building all eighteen targets again.
+      - name: Upload the builds
+        uses: actions/upload-artifact@v7
+        with:
+          name: prometheus-render-${{ github.ref_name }}
+          path: dist/
+          compression-level: 0
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
