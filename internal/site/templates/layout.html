@@ -1,0 +1,54 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<style>
+  :root { color-scheme: light dark;
+          --fg:#1a1a1a; --dim:#6a6a6a; --bg:#fff; --panel:#f6f6f4; --rule:#dcdcd6; --link:#0b57a4 }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg:#e6e6e6; --dim:#9a9a9a; --bg:#16171a; --panel:#1e2024; --rule:#33363c; --link:#78b4ff }
+  }
+  * { box-sizing: border-box }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif }
+  a { color:var(--link) }
+  header, footer { display:flex; align-items:center; gap:.75rem;
+                   padding:.9rem 1.25rem; border-bottom:1px solid var(--rule) }
+  footer { border-bottom:0; border-top:1px solid var(--rule); color:var(--dim); font-size:12px }
+  header h1 { margin:0; font-size:16px; font-weight:600; letter-spacing:.01em }
+  .spacer { flex:1 }
+  .gh { display:inline-flex; align-items:center; gap:.4rem; color:var(--dim); text-decoration:none }
+  .gh:hover { color:var(--fg) }
+  .gh svg { width:18px; height:18px; fill:currentColor }
+  main { padding:1.25rem; max-width:1100px; margin:0 auto }
+  /* Graphs carry their own background, so each sits on a plain panel rather
+     than being tinted by the page around it. */
+  figure { margin:0 0 1.5rem; background:var(--panel);
+           border:1px solid var(--rule); border-radius:6px; overflow:hidden }
+  figcaption { padding:.55rem .85rem; border-bottom:1px solid var(--rule);
+               font-size:13px; font-weight:600 }
+  figcaption a { text-decoration:none }
+  figcaption a:hover { text-decoration:underline }
+  figure img { display:block; max-width:100%; height:auto; padding:.6rem }
+  .sub { font-weight:400; color:var(--dim) }
+  .empty { color:var(--dim); padding:2rem 0 }
+</style>
+<header>
+  <h1>{{.Title}}</h1>
+  <span class="spacer"></span>
+  <a class="gh" href="https://github.com/ExpTechTW/prometheus-render"
+     rel="noopener" title="prometheus-render on GitHub">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+    prometheus-render
+  </a>
+</header>
+<main>{{end}}
+
+{{define "foot"}}</main>
+<footer>
+  Drawn {{.Now}} by
+  <a href="https://github.com/ExpTechTW/prometheus-render" rel="noopener">prometheus-render</a>.
+</footer>
+</html>
+{{end}}

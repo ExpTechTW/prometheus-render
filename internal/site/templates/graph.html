@@ -1,0 +1,9 @@
+{{template "head" .}}
+<p><a href="index.html">&larr; {{.SiteTitle}}</a></p>
+{{range .Images}}
+<figure>
+  <figcaption>{{.Title}}</figcaption>
+  <img src="{{.Src}}" alt="{{.Title}}">
+</figure>
+{{end}}
+{{template "foot" .}}

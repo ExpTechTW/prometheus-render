@@ -1,0 +1,11 @@
+{{template "head" .}}
+{{if not .Graphs}}<p class="empty">No graphs configured.</p>{{end}}
+{{range .Graphs}}
+<figure>
+  <figcaption><a href="{{.Href}}">{{.Title}}</a>
+    {{if .Sub}}<span class="sub">— {{.Sub}}</span>{{end}}
+  </figcaption>
+  <a href="{{.Href}}"><img src="{{.Img}}" alt="{{.Title}}"></a>
+</figure>
+{{end}}
+{{template "foot" .}}
