@@ -133,6 +133,55 @@ prometheus-render -t munin --area stacked --from -1d --title CPU \
   -q 'sum by (mode) (rate(node_cpu_seconds_total[5m]))' -l '{{mode}}' -o cpu.png
 ```
 
+### Scheduled graphs and an HTML site
+
+`--config` takes a YAML file, draws every graph in it over MRTG's four
+timescales, writes `index.html` and a page per graph, and redraws on the
+interval the file names:
+
+```bash
+prometheus-render --config site.yml
+```
+
+```yaml
+source:
+  url: http://localhost:9090
+
+output:
+  dir: site
+  title: Network
+  listen: ":8080"   # empty writes the files and nothing more, for nginx
+  interval: 5m      # 0 draws once and exits, which is what cron wants
+  workers: 0        # 0 means one per CPU
+
+defaults:
+  theme: mrtg
+  width: 500
+  height: 150
+  area: first
+  tz: Asia/Taipei
+  # Omit ranges to get MRTG's four: 1d / 1w / 1m / 1y
+
+graphs:
+  - name: traffic
+    title: eth0 traffic
+    vtitle: bits/sec
+    series:
+      - expr: rate(node_network_receive_bytes_total{device="eth0"}[5m]) * 8
+        legend: inbound
+      - expr: rate(node_network_transmit_bytes_total{device="eth0"}[5m]) * 8
+        legend: outbound
+```
+
+One graph at one timescale is one job, and the jobs are independent, so they
+run across `workers` goroutines rather than queueing on a single core.
+`max_queries` separately bounds how many queries are in flight, so the fan-out
+does not reach the source as one burst. A full example is in
+[`site.example.yml`](site.example.yml).
+
+Images are written through a temporary file and renamed into place, so anyone
+reading the site mid-render never sees half an image.
+
 ### Server mode
 
 `--serve` exposes a `/render` endpoint an `<img>` tag can point at. The flags
@@ -200,6 +249,8 @@ internal/query          window and step resolution, parallel fetch
 internal/params         settings shared by the CLI and the server
 internal/render         joins a query to the library
 internal/server         the /render endpoint
+internal/config         the YAML config file
+internal/site           scheduling, the worker pool and the HTML
 examples/gallery        renders out/ from SQLite (its own module)
 testdata/sample.db      the sample dataset
 hack/                   checks that read the rendered pixels back

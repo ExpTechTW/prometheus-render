@@ -121,6 +121,51 @@ prometheus-render -t munin --area stacked --from -1d --title CPU \
   -q 'sum by (mode) (rate(node_cpu_seconds_total[5m]))' -l '{{mode}}' -o cpu.png
 ```
 
+### 定時繪圖與 HTML 網頁
+
+`--config` 吃一份 yml，把裡面每張圖畫成 MRTG 的四種時間尺度，產生 `index.html`
+與每張圖一頁，然後照設定的週期重畫：
+
+```bash
+prometheus-render --config site.yml
+```
+
+```yaml
+source:
+  url: http://localhost:9090
+
+output:
+  dir: site
+  title: Network
+  listen: ":8080"   # 留空則只寫檔，交給 nginx
+  interval: 5m      # 0 表示畫一次就結束，給 cron 用
+  workers: 0        # 0 = 每顆 CPU 一個
+
+defaults:
+  theme: mrtg
+  width: 500
+  height: 150
+  area: first
+  tz: Asia/Taipei
+  # 省略 ranges 就是 MRTG 的四層：1d / 1w / 1m / 1y
+
+graphs:
+  - name: traffic
+    title: eth0 traffic
+    vtitle: bits/sec
+    series:
+      - expr: rate(node_network_receive_bytes_total{device="eth0"}[5m]) * 8
+        legend: inbound
+      - expr: rate(node_network_transmit_bytes_total{device="eth0"}[5m]) * 8
+        legend: outbound
+```
+
+一張圖的一個尺度就是一件工作，彼此獨立，散在 `workers` 個 goroutine 上跑，
+所以不會卡在單一核心上。`max_queries` 另外限制同時在飛的查詢數，避免整批查詢
+一次打到資料來源。完整範例見 [`site.example.yml`](site.example.yml)。
+
+圖片先寫暫存檔再 rename 就位，所以正在看網頁的人不會撞見畫到一半的圖。
+
 ### HTTP 服務
 
 `--serve` 開一個 `/render` 端點，可以直接讓 `<img>` 指過來。上面的旗標都能當
@@ -186,6 +231,8 @@ internal/query          時間窗與 step 決策、平行抓取
 internal/params         CLI 與 HTTP 共用的參數層
 internal/render         把查詢結果接到函式庫
 internal/server         /render 端點
+internal/config          yml 設定檔
+internal/site           定時繪圖、工作池與 HTML 產生
 examples/gallery        從 SQLite 產生 out/ 的範例程式（獨立 module）
 testdata/sample.db      範例資料
 hack/                   讀回渲染像素的檢查工具
