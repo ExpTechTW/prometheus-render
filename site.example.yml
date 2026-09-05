@@ -1,0 +1,74 @@
+# A worked config for --config. Draws every graph below over MRTG's four
+# timescales, writes index.html plus a page per graph, and redraws on a timer.
+#
+#   prometheus-render --config site.example.yml
+
+source:
+  url: http://localhost:9090
+  timeout: 30s
+  # VictoriaMetrics: http://vmselect:8481/select/0/prometheus
+  # user: alice:secret
+  # headers:
+  #   X-Scope-OrgID: tenant-a
+  # insecure: false
+
+  # How many queries may be in flight at once. Drawing fans out over every
+  # graph and timescale together, and without a bound that arrives at the
+  # source as one burst.
+  max_queries: 8
+
+output:
+  dir: site
+  title: Network
+  # Serve the directory as well as writing it. Leave empty to only write the
+  # files, for nginx or any other static server to pick up.
+  listen: ":8080"
+  # Redraw on this interval. 0 draws once and exits, which is what cron wants.
+  interval: 5m
+  # Images drawn at once. 0 means one worker per CPU.
+  workers: 0
+
+# Inherited by every graph below; any graph may override any of it.
+defaults:
+  theme: mrtg
+  width: 500
+  height: 150
+  area: first
+  zoom: 2
+  tz: Asia/Taipei
+
+  # MRTG's four timescales. Omit this key to get exactly these.
+  ranges:
+    - {name: 1d, title: "Daily (5 min average)",    from: -1d,   step: 5m}
+    - {name: 1w, title: "Weekly (30 min average)",  from: -7d,   step: 30m}
+    - {name: 1m, title: "Monthly (2 hour average)", from: -30d,  step: 2h}
+    - {name: 1y, title: "Yearly (1 day average)",   from: -365d, step: 1d}
+
+graphs:
+  # name is used for the page and the image directory, so keep it path-safe.
+  - name: traffic
+    title: Traffic
+    vtitle: Mbps
+    series:
+      - expr: rate(node_network_receive_bytes_total{device!~"lo|veth.*"}[5m]) * 8 / 1e6
+        legend: inbound
+      - expr: rate(node_network_transmit_bytes_total{device!~"lo|veth.*"}[5m]) * 8 / 1e6
+        legend: outbound
+
+  - name: pps
+    title: Packets
+    vtitle: packets/sec
+    series:
+      - expr: rate(node_network_receive_packets_total{device!~"lo|veth.*"}[5m])
+        legend: inbound
+      - expr: rate(node_network_transmit_packets_total{device!~"lo|veth.*"}[5m])
+        legend: outbound
+
+  - name: requests
+    title: Requests
+    vtitle: req/sec
+    area: none
+    y_min: 0
+    series:
+      - expr: sum by (instance) (rate(nginx_http_requests_total[5m]))
+        legend: "{{instance}}"

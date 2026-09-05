@@ -1,7 +1,8 @@
 // Command prometheus-render draws RRDtool/MRTG/Munin-style graphs from
 // Prometheus or VictoriaMetrics.
 //
-// One PromQL query gives one image; the drawing is pure Go.
+// One query gives one image. A config file gives a whole site: graphs over
+// MRTG's four timescales, redrawn on a timer and presented as plain HTML.
 package main
 
 import (
@@ -45,6 +46,7 @@ func run(argv []string) error {
 		user       = strFlag(fs, envOr("PROMETHEUS_AUTH", ""), "user")
 		output     = strFlag(fs, "graph.png", "output", "o")
 		serve      = strFlag(fs, "", "serve")
+		configPath = strFlag(fs, "", "config", "c")
 		headers    = map[string]string{}
 		timeout    = fs.Duration("timeout", 30*time.Second, "")
 		insecure   = boolFlag(fs, "insecure", "k")
@@ -86,6 +88,10 @@ func run(argv []string) error {
 	case *listThemes:
 		fmt.Println(strings.Join(tsgraph.ThemeNames(), "\n"))
 		return nil
+	}
+
+	if *configPath != "" {
+		return runSite(*configPath)
 	}
 
 	client := newClient(*baseURL, *timeout, *user, headers, *insecure)

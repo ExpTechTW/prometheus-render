@@ -7,6 +7,7 @@ config file gives a whole site, redrawn on a timer and presented as plain HTML.
 
 USAGE
   prometheus-render -q <promql> [flags]
+  prometheus-render --config site.yml
   prometheus-render --serve :8080 [flags]
 
 DATA SOURCE
@@ -48,6 +49,14 @@ APPEARANCE
       --zoom N         Scale the whole image (2 for HiDPI)
       --tz ZONE        Time axis timezone, e.g. Asia/Taipei
 
+SITE
+  -c, --config FILE    Draw every graph in a YAML config over MRTG's four
+                       timescales, write index.html and a page per graph, and
+                       redraw on the interval the file names. Images are drawn
+                       in parallel, one worker per CPU by default.
+                       An interval of 0 draws once and exits, for cron.
+                       See site.example.yml.
+
 SERVER
       --serve ADDR     Serve GET /render?target=<promql>&from=-1h&width=400
                        Most flags above are accepted as URL parameters.
@@ -65,4 +74,5 @@ EXAMPLES
     --title 'CPU' -o cpu.png
 
   # A whole site, redrawn every 5 minutes and served on :8080
+  prometheus-render --config site.yml
 `

@@ -4,3 +4,10 @@ __pycache__/
 
 # The example generator's binary; the images it writes are tracked.
 examples/gallery/gallery
+
+# The site --config writes; regenerate it rather than tracking it.
+# Anchored, so it does not also swallow internal/site/.
+/site/
+
+# Release archives built by hack/build-release.sh.
+/dist/
