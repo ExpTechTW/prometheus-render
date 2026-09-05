@@ -19,6 +19,11 @@ import (
 type Server struct {
 	Client   *promapi.Client
 	Defaults params.Defaults
+
+	// Dir, when set, serves a generated site at / alongside the live
+	// endpoint, so the scheduled pages and an ad-hoc /render?target=... are
+	// reachable from one address.
+	Dir string
 }
 
 // ListenAndServe starts the HTTP server on addr.
@@ -39,6 +44,10 @@ func (s *Server) Handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "ok")
 	})
+	if s.Dir != "" {
+		// The patterns above are more specific, so they still win.
+		mux.Handle("/", http.FileServer(http.Dir(s.Dir)))
+	}
 	return mux
 }
 
