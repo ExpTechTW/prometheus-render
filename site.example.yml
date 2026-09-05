@@ -1,5 +1,5 @@
 # A worked config for --config. Draws every graph below over MRTG's four
-# timescales, writes index.html plus a page per graph, and redraws on a timer.
+# timescales, writes the pages that present them, and redraws on a timer.
 #
 #   prometheus-render --config site.example.yml
 
@@ -13,29 +13,55 @@ source:
   # insecure: false
 
   # How many queries may be in flight at once. Drawing fans out over every
-  # graph and timescale together, and without a bound that arrives at the
-  # source as one burst.
+  # graph, region and timescale together, and without a bound that arrives at
+  # the source as one burst.
   max_queries: 8
 
 output:
   dir: site
   title: Network
-  # Serve the directory as well as writing it. Leave empty to only write the
-  # files, for nginx or any other static server to pick up.
+  # Serve the pages as well as writing them. Leave empty to only write the
+  # files, for nginx or any other static server to pick up. Nothing served
+  # accepts a query: what is published is what is drawn below.
   listen: ":8080"
   # Redraw on this interval. 0 draws once and exits, which is what cron wants.
   interval: 5m
   # Images drawn at once. 0 means one worker per CPU.
   workers: 0
 
+# Splitting the site by a label makes it readable both ways round: everything
+# about one place, or one thing across every place. Remove this block for a
+# single flat list of graphs.
+regions:
+  # The label to split on. It also names the placeholder the queries use, so
+  # splitting by "region" means writing $region below.
+  label: region
+  # Restrict discovery to these series. Without it, every value of the label
+  # is used.
+  match: '{job="nginx"}'
+  # Friendlier names. A value not listed keeps its own.
+  titles:
+    tnn: Tainan
+    tyo: Tokyo
+
 # Inherited by every graph below; any graph may override any of it.
 defaults:
   theme: mrtg
+  # The page carries a light/dark switch. Both are drawn from the same
+  # samples, so the second palette costs no extra query.
+  dark_theme: dark
   width: 500
   height: 150
   area: first
   zoom: 2
   tz: Asia/Taipei
+
+  # MRTG's peak traces: a second line per series showing the highest value in
+  # each bucket rather than the mean, drawn behind the averages so it shows
+  # only where it rises above them. The page offers it as a button.
+  peak: true
+  # Each timescale peaks at the resolution of the one below it, so the yearly
+  # graph peaks at the monthly graph's. Set peak_step on a range to override.
 
   # MRTG's four timescales. Omit this key to get exactly these.
   ranges:
@@ -50,25 +76,49 @@ graphs:
     title: Traffic
     vtitle: Mbps
     series:
-      - expr: rate(node_network_receive_bytes_total{device!~"lo|veth.*"}[5m]) * 8 / 1e6
-        legend: inbound
-      - expr: rate(node_network_transmit_bytes_total{device!~"lo|veth.*"}[5m]) * 8 / 1e6
-        legend: outbound
+      - expr: sum(rate(nginx_http_in_bytes_total{region="$region"}[5m])) * 8 / 1e6
+        legend: RX
+      - expr: sum(rate(nginx_http_bytes_total{region="$region"}[5m])) * 8 / 1e6
+        legend: TX
 
   - name: pps
     title: Packets
     vtitle: packets/sec
     series:
-      - expr: rate(node_network_receive_packets_total{device!~"lo|veth.*"}[5m])
-        legend: inbound
-      - expr: rate(node_network_transmit_packets_total{device!~"lo|veth.*"}[5m])
-        legend: outbound
+      - expr: sum(rate(node_network_receive_packets_total{region="$region"}[5m]))
+        legend: RX
+      - expr: sum(rate(node_network_transmit_packets_total{region="$region"}[5m]))
+        legend: TX
 
-  - name: requests
+  - name: request
     title: Requests
     vtitle: req/sec
     area: none
     y_min: 0
     series:
-      - expr: sum by (instance) (rate(nginx_http_requests_total[5m]))
-        legend: "{{instance}}"
+      - expr: sum(rate(nginx_http_requests_total{region="$region"}[5m]))
+        legend: requests
+
+  # A graph that exists in one place only. Without this it would be drawn for
+  # every region, and the ones with nothing to show would be left off the
+  # pages anyway -- but saying so avoids the queries.
+  - name: sensor
+    title: Sensor lag
+    vtitle: seconds
+    peak: false
+    y_min: 0
+    only_regions: [tnn]
+    series:
+      - expr: palert_data_lag_seconds
+        legend: lag
+
+  # A graph that is not split at all: one drawing covering everywhere.
+  - name: total
+    title: All regions
+    vtitle: Mbps
+    global: true
+    series:
+      - expr: sum(rate(nginx_http_in_bytes_total[5m])) * 8 / 1e6
+        legend: RX
+      - expr: sum(rate(nginx_http_bytes_total[5m])) * 8 / 1e6
+        legend: TX

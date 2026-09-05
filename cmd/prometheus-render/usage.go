@@ -51,10 +51,20 @@ APPEARANCE
 
 SITE
   -c, --config FILE    Draw every graph in a YAML config over MRTG's four
-                       timescales, write index.html and a page per graph, and
+                       timescales, write the pages that present them, and
                        redraw on the interval the file names. Images are drawn
                        in parallel, one worker per CPU by default.
                        An interval of 0 draws once and exits, for cron.
+
+                       A regions block splits the site by a label, so it reads
+                       either way round: everything about one place, or one
+                       thing across every place. The values are discovered
+                       from the data.
+
+                       Every graph is drawn light and dark, and with MRTG's
+                       peak traces where asked for; the page switches between
+                       them. All of it comes from one query per timescale.
+
                        See site.example.yml.
       --serve ADDR     Serve the drawn pages on ADDR, overriding output.listen.
                        Requires --config: what is served is what the config
@@ -64,8 +74,8 @@ SITE
 EXAMPLES
   # Classic MRTG traffic graph
   prometheus-render -t mrtg --area first --vtitle 'bits/sec' \
-    -q 'rate(node_network_receive_bytes_total{device="eth0"}[5m])*8'  -l 'inbound ' \
-    -q 'rate(node_network_transmit_bytes_total{device="eth0"}[5m])*8' -l 'outbound' \
+    -q 'rate(node_network_receive_bytes_total{device="eth0"}[5m])*8'  -l 'RX' \
+    -q 'rate(node_network_transmit_bytes_total{device="eth0"}[5m])*8' -l 'TX' \
     --title 'eth0 traffic' -o traffic.png
 
   # Munin-style stacked CPU, last 24 hours

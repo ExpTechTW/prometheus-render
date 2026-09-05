@@ -44,10 +44,10 @@ averaging hides spikes:
 
 | Colour | | Series |
 |---|---|---|
-| `#00CC00` | green | inbound, filled |
-| `#0000FF` | blue | outbound, line |
-| `#006600` | dark green | peak of the inbound |
-| `#FF00FF` | magenta | peak of the outbound |
+| `#00CC00` | green | RX, filled |
+| `#0000FF` | blue | TX, line |
+| `#006600` | dark green | peak of the RX |
+| `#FF00FF` | magenta | peak of the TX |
 
 In the graph above the 30-minute average tops out at 41 Mbps, while the busiest
 5-minute sample in the same window reached **68 Mbps** — the average understates
@@ -117,7 +117,7 @@ prometheus-render -u http://vmselect:8481/select/0/prometheus -q 'node_load1'
 
 ### Examples
 
-The classic MRTG traffic graph — filled inbound, outbound as a line:
+The classic MRTG traffic graph — filled RX, TX as a line:
 
 ```sh
 prometheus-render -t mrtg --area first --vtitle 'Mbps' \
@@ -136,8 +136,8 @@ prometheus-render -t munin --area stacked --from -1d --title CPU \
 ### Scheduled graphs and an HTML site
 
 `--config` takes a YAML file, draws every graph in it over MRTG's four
-timescales, writes `index.html` and a page per graph, and redraws on the
-interval the file names:
+timescales, writes the pages that present them, and redraws on the interval
+the file names:
 
 ```bash
 prometheus-render --config site.yml
@@ -156,31 +156,70 @@ output:
 
 defaults:
   theme: mrtg
-  width: 500
-  height: 150
+  dark_theme: dark  # switched on the page; both share one query
+  peak: true        # MRTG's peak traces, offered as a button
   area: first
   tz: Asia/Taipei
   # Omit ranges to get MRTG's four: 1d / 1w / 1m / 1y
 
 graphs:
   - name: traffic
-    title: eth0 traffic
-    vtitle: bits/sec
+    title: Traffic
+    vtitle: Mbps
     series:
-      - expr: rate(node_network_receive_bytes_total{device="eth0"}[5m]) * 8
-        legend: inbound
-      - expr: rate(node_network_transmit_bytes_total{device="eth0"}[5m]) * 8
-        legend: outbound
+      - {expr: 'sum(rate(nginx_http_in_bytes_total[5m])) * 8 / 1e6', legend: RX}
+      - {expr: 'sum(rate(nginx_http_bytes_total[5m])) * 8 / 1e6',    legend: TX}
 ```
 
-One graph at one timescale is one job, and the jobs are independent, so they
-run across `workers` goroutines rather than queueing on a single core.
-`max_queries` separately bounds how many queries are in flight, so the fan-out
-does not reach the source as one burst. A full example is in
-[`site.example.yml`](site.example.yml).
+A full example is in [`site.example.yml`](site.example.yml).
 
-Images are written through a temporary file and renamed into place, so anyone
-reading the site mid-render never sees half an image.
+#### Many places
+
+A `regions` block makes the same graphs readable both ways round: **everything
+about one place**, or **one thing across every place**.
+
+```yaml
+regions:
+  label: region              # split on this; it also names the placeholder
+  match: '{job="nginx"}'     # discover values from these series only
+  titles: {tnn: Tainan, tyo: Tokyo}
+
+graphs:
+  - name: traffic
+    series:
+      - {expr: 'sum(rate(nginx_http_in_bytes_total{region="$region"}[5m]))', legend: RX}
+
+  - name: sensor
+    only_regions: [tnn]      # something that lives in one place
+
+  - name: total
+    global: true             # not split at all
+```
+
+**The values are discovered from the data**, so a node arriving or leaving
+changes the pages without editing the file. A graph with nothing to show in a
+region is left off the pages; one whose query failed is kept, because that
+means unknown rather than absent.
+
+A label value that could reshape a query -- one carrying a quote, a backslash
+or a brace -- is refused rather than escaped. Real infrastructure labels do not
+look like that.
+
+#### Themes and peaks
+
+Every graph is drawn in a light and a dark palette, and a graph with
+`peak: true` is also drawn with MRTG's peak traces. The page switches between
+them with buttons; the theme is remembered in `localStorage`, and each drawing
+remembers its own peak setting.
+
+Peaks follow MRTG: the highest value in each sample bucket rather than the
+mean, drawn behind the averages so they show only where they rise above them.
+**Each timescale peaks at the resolution of the one below it** -- the yearly
+graph at the monthly graph's -- which is both what MRTG does and what keeps the
+subquery from asking for a hundred thousand points.
+
+One query feeds all four images: a palette and a peak trace change how samples
+are drawn, not which are read.
 
 ### Serving the drawn pages
 

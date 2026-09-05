@@ -38,10 +38,10 @@ Prometheus 生態沒有伺服器端的圖片產生器。Prometheus 自己的 UI 
 
 | 顏色 | | 序列 |
 |---|---|---|
-| `#00CC00` | 綠 | 進站，填充 |
-| `#0000FF` | 藍 | 出站，線條 |
-| `#006600` | 墨綠 | 進站的 peak |
-| `#FF00FF` | 洋紅 | 出站的 peak |
+| `#00CC00` | 綠 | RX，填充 |
+| `#0000FF` | 藍 | TX，線條 |
+| `#006600` | 墨綠 | RX 的 peak |
+| `#FF00FF` | 洋紅 | TX 的 peak |
 
 上圖裡 30 分鐘平均最高 41 Mbps，但同一段時間內最忙的 5 分鐘樣本達 **68 Mbps**
 ——平均低估了三分之二。
@@ -105,7 +105,7 @@ prometheus-render -u http://vmselect:8481/select/0/prometheus -q 'node_load1'
 
 ### 範例
 
-經典 MRTG 流量圖——進站填充、出站線條：
+經典 MRTG 流量圖——RX 填充、TX 線條：
 
 ```sh
 prometheus-render -t mrtg --area first --vtitle 'Mbps' \
@@ -123,8 +123,8 @@ prometheus-render -t munin --area stacked --from -1d --title CPU \
 
 ### 定時繪圖與 HTML 網頁
 
-`--config` 吃一份 yml，把裡面每張圖畫成 MRTG 的四種時間尺度，產生 `index.html`
-與每張圖一頁，然後照設定的週期重畫：
+`--config` 吃一份 yml，把裡面每張圖畫成 MRTG 的四種時間尺度，產生頁面，然後照設定
+的週期重畫：
 
 ```bash
 prometheus-render --config site.yml
@@ -143,28 +143,62 @@ output:
 
 defaults:
   theme: mrtg
-  width: 500
-  height: 150
+  dark_theme: dark  # 頁面上可切換，兩種主題共用同一次查詢
+  peak: true        # MRTG 的峰值線，頁面上用按鈕切換
   area: first
   tz: Asia/Taipei
   # 省略 ranges 就是 MRTG 的四層：1d / 1w / 1m / 1y
 
 graphs:
   - name: traffic
-    title: eth0 traffic
-    vtitle: bits/sec
+    title: Traffic
+    vtitle: Mbps
     series:
-      - expr: rate(node_network_receive_bytes_total{device="eth0"}[5m]) * 8
-        legend: inbound
-      - expr: rate(node_network_transmit_bytes_total{device="eth0"}[5m]) * 8
-        legend: outbound
+      - {expr: 'sum(rate(nginx_http_in_bytes_total[5m])) * 8 / 1e6', legend: RX}
+      - {expr: 'sum(rate(nginx_http_bytes_total[5m])) * 8 / 1e6',    legend: TX}
 ```
 
-一張圖的一個尺度就是一件工作，彼此獨立，散在 `workers` 個 goroutine 上跑，
-所以不會卡在單一核心上。`max_queries` 另外限制同時在飛的查詢數，避免整批查詢
-一次打到資料來源。完整範例見 [`site.example.yml`](site.example.yml)。
+完整範例見 [`site.example.yml`](site.example.yml)。
 
-圖片先寫暫存檔再 rename 就位，所以正在看網頁的人不會撞見畫到一半的圖。
+#### 多地點
+
+加上 `regions` 區塊，同一批圖就能兩種方式讀：**看一個地點的所有圖表**，或**看一項
+圖表在所有地點的樣子**。
+
+```yaml
+regions:
+  label: region              # 依這個標籤切分，也決定查詢裡的佔位符 $region
+  match: '{job="nginx"}'     # 只從這些序列裡找值
+  titles: {tnn: 台南, tyo: 東京}
+
+graphs:
+  - name: traffic
+    series:
+      - {expr: 'sum(rate(nginx_http_in_bytes_total{region="$region"}[5m]))', legend: RX}
+
+  - name: sensor
+    only_regions: [tnn]      # 只存在於一個地點的東西
+
+  - name: total
+    global: true             # 不切分，一張圖涵蓋全部
+```
+
+**值是從資料裡發現的**，所以增減節點不必改設定檔。某個地點查不到資料的圖不會出現在
+頁面上；查詢失敗則保留，因為那代表「不知道」而不是「沒有」。
+
+會重塑查詢的標籤值（含引號、反斜線、大括號的）會被拒絕而不是跳脫——真實的基礎設施
+標籤不會長那樣。
+
+#### 主題與峰值
+
+每張圖都畫成 light 與 dark 兩種配色；`peak: true` 的圖另外畫出帶峰值線的版本。
+頁面用按鈕切換，主題選擇記在 `localStorage`，峰值選擇記在每張圖上。
+
+峰值是 MRTG 的作法：每個取樣桶取最大值而非平均，畫在平均線後面，所以只在高過平均
+處露出。**每一層的峰值取自下一層較細的解析度**（年圖取自月圖的），這既符合 MRTG，
+也讓子查詢的點數不會爆掉。
+
+一次查詢餵四張圖——配色與峰值改變的是畫法，不是讀取的資料。
 
 ### 服務產出的頁面
 
