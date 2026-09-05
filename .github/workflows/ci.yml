@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      # The renderer fans work out over goroutines, so the race detector earns
+      # its keep here.
+      - name: Test
+        run: go test -race ./...
+
+      # The example gallery is its own module and would otherwise go unbuilt.
+      - name: Build the example gallery
+        working-directory: examples/gallery
+        run: go build ./...
+
+  # Every target the release builds, built on every change, so a tag never
+  # fails on a platform nobody had compiled in months.
+  cross-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - run: hack/build-release.sh ci
