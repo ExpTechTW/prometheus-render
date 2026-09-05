@@ -4,6 +4,7 @@ package query
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -11,6 +12,11 @@ import (
 	"github.com/ExpTechTW/prometheus-render/internal/promapi"
 	"github.com/ExpTechTW/prometheus-render/internal/series"
 )
+
+// ErrNoSeries is returned when every target matched nothing. A caller drawing
+// a whole site treats it as a graph that has nothing to show yet -- a sensor
+// that lives in one place, a node only just added -- rather than a failure.
+var ErrNoSeries = errors.New("query returned no series")
 
 // DefaultMaxPoints mirrors the sample ceiling Prometheus enforces per range
 // query; exceeding it makes the server reject the request outright.
@@ -62,6 +68,17 @@ func (r *Request) ResolveStep() time.Duration {
 // Build runs every target against the API and returns the combined series in
 // target order.
 func (r *Request) Build(ctx context.Context, c *promapi.Client) ([]series.Series, error) {
+	grouped, err := r.BuildGrouped(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	return Flatten(grouped), nil
+}
+
+// BuildGrouped is Build with each target's series kept apart, so a caller can
+// draw a subset from one fetch -- the averages without their peak traces, say
+// -- rather than querying twice for the same samples.
+func (r *Request) BuildGrouped(ctx context.Context, c *promapi.Client) ([][]series.Series, error) {
 	if len(r.Targets) == 0 {
 		return nil, fmt.Errorf("no query given")
 	}
@@ -101,12 +118,21 @@ func (r *Request) Build(ctx context.Context, c *promapi.Client) ([]series.Series
 		}
 	}
 
+	total := 0
+	for _, g := range perTarget {
+		total += len(g)
+	}
+	if total == 0 {
+		return nil, ErrNoSeries
+	}
+	return perTarget, nil
+}
+
+// Flatten joins grouped series back into one list, in target order.
+func Flatten(grouped [][]series.Series) []series.Series {
 	var out []series.Series
-	for _, s := range perTarget {
-		out = append(out, s...)
+	for _, g := range grouped {
+		out = append(out, g...)
 	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("query returned no series")
-	}
-	return out, nil
+	return out
 }
