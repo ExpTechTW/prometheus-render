@@ -64,4 +64,6 @@ jobs:
           # The archives are already compressed; zipping them again buys
           # nothing and costs minutes.
           compression-level: 0
-          retention-days: 14
+          # The repository caps retention at 3 days, so asking for longer
+          # would only be misleading.
+          retention-days: 3
