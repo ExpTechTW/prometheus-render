@@ -3,11 +3,12 @@ name: Image
 on:
   push:
     tags: ["v*"]
-  # So an existing tag can be built without moving it.
+  # So a version can be built from the branch you dispatch from -- which is
+  # how v1.0.0 got an image, the Dockerfile having arrived after that tag.
   workflow_dispatch:
     inputs:
       version:
-        description: Tag to build, e.g. v1.0.0
+        description: Version to stamp and tag the image with, e.g. v1.0.0
         required: true
 
 permissions:
@@ -19,8 +20,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.version || github.ref }}
 
       - id: version
         run: echo "value=${{ inputs.version || github.ref_name }}" >> "$GITHUB_OUTPUT"
