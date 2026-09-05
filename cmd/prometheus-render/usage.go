@@ -2,8 +2,8 @@ package main
 
 const usage = `prometheus-render - RRDtool/MRTG/Munin-style graphs from Prometheus or VictoriaMetrics
 
-Graphs are drawn by rrdtool itself; this tool only runs the queries and loads the
-result into a scratch RRD for it. Requires the rrdtool binary in PATH.
+Drawing is pure Go: no rrdtool, no cairo, no cgo. One query gives one image; a
+config file gives a whole site, redrawn on a timer and presented as plain HTML.
 
 USAGE
   prometheus-render -q <promql> [flags]
@@ -26,33 +26,27 @@ QUERY
                        1735689600, 2026-01-01T00:00:00Z
       --until T        Window end (default now)
       --step D         Resolution, e.g. 60, 5min. Default: ~1 point per pixel
-      --consolidation  average|min|max|last (default average)
       --max-points N   Sample ceiling per query (default 11000)
 
 OUTPUT
-  -o, --output PATH    Output file, '-' for stdout (default graph.png)
-      --format F       png|svg|pdf|eps (default: from the -o extension)
-  -t, --template NAME  rrd|mrtg|munin|light|dark (default rrd)
-      --list-templates
+  -o, --output PATH    Output PNG, '-' for stdout (default graph.png)
+  -t, --theme NAME     mrtg|munin|dark (default mrtg)
+      --list-themes
 
 APPEARANCE
-  -w, --width N        Plot canvas width, default 400. rrdtool sizes the canvas,
-  -H, --height N       not the image; the file comes out ~100px larger.
+  -w, --width N        Plot canvas width, default 400. The canvas is measured
+  -H, --height N       the way rrdtool measures it, so the file comes out
+                       larger than these numbers.
       --title S            --vtitle S (y-axis label)
       --area MODE      none|first|all|stacked
-      --behind-from N  draw series N onwards first, i.e. behind the rest
-      --line-width N       --colors '#00CC00,#0066B3,...'
+      --behind-from N  Draw series N onwards first, i.e. behind the rest
+      --line-width N
       --y-min V            --y-max V        (both given implies a rigid scale)
       --base 1024      Binary units for the y-axis and the statistics
-      --logarithmic        --staircase (rrdtool's stepped lines, not sloped)
-      --null-as-zero   Draw gaps as zero instead of a break
       --hide-stats     Drop the Cur/Min/Avg/Max table
-      --hide-legend        --hide-grid      --graph-only
-      --stat-format F  GPRINT format, default '%6.2lf%s'
+      --hide-legend
       --zoom N         Scale the whole image (2 for HiDPI)
-      --watermark S        --tz ZONE
-      --rrd-arg ARG    Raw 'rrdtool graph' argument (repeatable), e.g.
-                       --rrd-arg --right-axis --rrd-arg '1:0'
+      --tz ZONE        Time axis timezone, e.g. Asia/Taipei
 
 SERVER
       --serve ADDR     Serve GET /render?target=<promql>&from=-1h&width=400
@@ -70,8 +64,5 @@ EXAMPLES
     -q 'sum by (mode) (rate(node_cpu_seconds_total[5m]))' -l '{{mode}}' \
     --title 'CPU' -o cpu.png
 
-  # The classic RRD hourly/daily/weekly/yearly row
-  for w in 1h 1d 1w 1y; do
-    prometheus-render --from "-$w" -q 'node_load1' -o "load-$w.png"
-  done
+  # A whole site, redrawn every 5 minutes and served on :8080
 `

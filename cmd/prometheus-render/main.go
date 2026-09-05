@@ -1,8 +1,7 @@
 // Command prometheus-render draws RRDtool/MRTG/Munin-style graphs from
 // Prometheus or VictoriaMetrics.
 //
-// The drawing is done entirely by rrdtool; this program only runs PromQL range
-// queries and loads the result into a scratch RRD for it.
+// One PromQL query gives one image; the drawing is pure Go.
 package main
 
 import (
