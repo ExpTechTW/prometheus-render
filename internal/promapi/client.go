@@ -22,6 +22,12 @@ type Client struct {
 	Username string
 	Password string
 	Headers  map[string]string
+
+	// Limit, when non-nil, bounds how many queries are in flight at once.
+	// Drawing a whole site fans out over every graph and timescale together,
+	// which would otherwise reach the server as a single burst. Its capacity
+	// is the bound; the channel is never read from anywhere else.
+	Limit chan struct{}
 }
 
 // NewClient returns a Client for the given base URL, e.g.
@@ -76,6 +82,15 @@ type apiResult struct {
 func (c *Client) QueryRange(ctx context.Context, q RangeQuery) ([]series.Series, error) {
 	if q.Step <= 0 {
 		return nil, fmt.Errorf("step must be positive")
+	}
+
+	if c.Limit != nil {
+		select {
+		case c.Limit <- struct{}{}:
+			defer func() { <-c.Limit }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 
 	form := url.Values{}
