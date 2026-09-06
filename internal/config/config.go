@@ -53,6 +53,23 @@ type Regions struct {
 // Split reports whether the site is divided by region at all.
 func (c *Config) Split() bool { return c.Regions.Label != "" }
 
+// Region is one value the site is split by, in its two guises: the label value
+// the queries need, and the name the config gives it. The name is what appears
+// on the pages, in the paths and on the drawings; the value stays behind in
+// the query, where the source knows it.
+type Region struct {
+	Value string
+	Name  string
+}
+
+// Region pairs a discovered label value with the name to present it under.
+func (c *Config) Region(value string) Region {
+	if t, ok := c.Regions.Titles[value]; ok && t != "" {
+		return Region{Value: value, Name: t}
+	}
+	return Region{Value: value, Name: value}
+}
+
 // Location is the timezone the site reads in: the one its graphs are drawn in,
 // so the time under a page agrees with the time along its axes.
 func (c *Config) Location() *time.Location {
@@ -229,6 +246,9 @@ var reserved = map[string]bool{"region": true, "graph": true, "index": true}
 // A value carrying a quote, a backslash, a newline or a brace is refused
 // rather than escaped: real infrastructure labels never contain them, and a
 // label value trying to close a string is not a region.
+// SafePath reports whether a name can stand as a path segment.
+func SafePath(v string) bool { return nameRE.MatchString(v) && !reserved[v] }
+
 func SafeRegion(v string) bool {
 	return v != "" && !strings.ContainsAny(v, "\"\\\n\r{}") && !reserved[v]
 }
@@ -281,6 +301,16 @@ func Parse(b []byte) (*Config, error) {
 
 	if c.Regions.Label != "" && !nameRE.MatchString(c.Regions.Label) {
 		return nil, fmt.Errorf("config: regions.label %q is not a label name", c.Regions.Label)
+	}
+	// A region's name is what its pages are filed under, so it has to be
+	// usable as a path segment. Saying so here beats a name that silently
+	// becomes something else in the URL.
+	for value, name := range c.Regions.Titles {
+		if !nameRE.MatchString(name) || reserved[name] {
+			return nil, fmt.Errorf(
+				"config: regions.titles[%s] = %q: a name is used in the path, so it must be "+
+					"letters, digits, dot, dash or underscore", value, name)
+		}
 	}
 
 	if len(c.Graphs) == 0 {
@@ -457,20 +487,17 @@ func (g *Graph) InRegion(region string) bool {
 		return true
 	}
 	for _, r := range g.OnlyRegions {
-		if r == region {
+		// Either guise will do: the label value as the data has it, or the
+		// name the config gave it.
+		if r == region || r == g.regionTitle(region) {
 			return true
 		}
 	}
 	return false
 }
 
-// Title returns the friendlier name for a region, or the value itself.
-func (c *Config) Title(region string) string {
-	if t, ok := c.Regions.Titles[region]; ok && t != "" {
-		return t
-	}
-	return region
-}
+// Title is the name a region is presented under.
+func (c *Config) Title(region string) string { return c.Region(region).Name }
 
 // Values flattens one graph, in one region, at one timescale, drawn in one
 // theme, into the settings the params package resolves -- the same form the CLI flags arrive

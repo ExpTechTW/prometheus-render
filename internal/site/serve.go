@@ -14,6 +14,10 @@ import (
 // this process reads or how much work it costs. A parameter carrying PromQL
 // would be exactly that: whoever can reach the page would choose the query,
 // which is the shape of an injection rather than a feature.
+//
+// Nothing here sets cache headers. The site is redrawn on a timer at the same
+// paths, so it does need a freshness policy -- but that belongs to whatever
+// serves it to the world and knows its own edges.
 func (s *Site) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -21,24 +25,8 @@ func (s *Site) Handler() http.Handler {
 		fmt.Fprintln(w, "ok")
 	})
 	// More specific patterns win, so /healthz is not shadowed.
-	mux.Handle("/", revalidate(http.FileServer(http.Dir(s.Cfg.Output.Dir))))
+	mux.Handle("/", http.FileServer(http.Dir(s.Cfg.Output.Dir)))
 	return mux
-}
-
-// revalidate asks caches to check back before reusing anything.
-//
-// The site is redrawn on a timer at the same paths, so a cache that holds an
-// image past its freshness shows a status page that is quietly out of date --
-// which is worse than showing nothing, because it looks current.
-//
-// no-cache does not mean do not store: it means revalidate first. The file
-// server already sends Last-Modified, so revalidating costs a 304 rather than
-// the image.
-func revalidate(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-cache")
-		h.ServeHTTP(w, r)
-	})
 }
 
 // ListenAndServe serves the site on addr until ctx is cancelled.

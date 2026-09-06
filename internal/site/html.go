@@ -87,24 +87,24 @@ func (s *Site) writePages() error {
 	// each drawing gets its own page of timescales.
 	for _, g := range s.Cfg.Graphs {
 		for _, region := range s.scope(g) {
-			if !s.has(region, g) {
+			if !s.has(region.Name, g) {
 				continue
 			}
-			name := detailPath(region, g.Name)
+			name := detailPath(region.Name, g.Name)
 			dp := detailPage{
 				page:   chrome(name, g.Title),
-				Key:    imageBase(region, g.Name),
-				Base:   upTo(name) + imageBase(region, g.Name),
+				Key:    imageBase(region.Name, g.Name),
+				Base:   upTo(name) + imageBase(region.Name, g.Name),
 				Peak:   g.Peaks(),
 				Images: rangeImages(g),
 			}
-			if region != "" {
-				dp.Title = g.Title + " — " + s.Cfg.Title(region)
+			if region.Name != "" {
+				dp.Title = g.Title + " — " + region.Name
 			}
 			if err := s.writePage(name, "detail.html", dp); err != nil {
 				return err
 			}
-			if region == "" {
+			if region.Name == "" {
 				idx.Cards = append(idx.Cards, s.card(g, region, "index.html"))
 			}
 		}
@@ -113,10 +113,10 @@ func (s *Site) writePages() error {
 	if s.Cfg.Split() {
 		// One page per region: everything about one place.
 		for _, region := range s.regionList() {
-			name := "region/" + region + ".html"
-			lp := listPage{page: chrome(name, s.Cfg.Title(region))}
+			name := "region/" + region.Name + ".html"
+			lp := listPage{page: chrome(name, region.Name)}
 			for _, g := range s.Cfg.Graphs {
-				if !g.Global && s.has(region, g) {
+				if !g.Global && s.has(region.Name, g) {
 					lp.Cards = append(lp.Cards, s.card(g, region, name))
 				}
 			}
@@ -126,7 +126,7 @@ func (s *Site) writePages() error {
 			if err := s.writePage(name, "list.html", lp); err != nil {
 				return err
 			}
-			idx.Regions = append(idx.Regions, link{Title: s.Cfg.Title(region), Href: name})
+			idx.Regions = append(idx.Regions, link{Title: region.Name, Href: name})
 		}
 
 		// One page per graph: the same thing across every place.
@@ -137,9 +137,9 @@ func (s *Site) writePages() error {
 			name := "graph/" + g.Name + ".html"
 			lp := listPage{page: chrome(name, g.Title)}
 			for _, region := range s.regionList() {
-				if g.InRegion(region) && s.has(region, g) {
+				if g.InRegion(region.Value) && s.has(region.Name, g) {
 					c := s.card(g, region, name)
-					c.Title = s.Cfg.Title(region)
+					c.Title = region.Name
 					lp.Cards = append(lp.Cards, c)
 				}
 			}
@@ -157,13 +157,13 @@ func (s *Site) writePages() error {
 }
 
 // card describes one drawing as seen from the page at from.
-func (s *Site) card(g *config.Graph, region, from string) card {
+func (s *Site) card(g *config.Graph, region config.Region, from string) card {
 	up := upTo(from)
-	base := imageBase(region, g.Name)
+	base := imageBase(region.Name, g.Name)
 	return card{
 		Title: g.Title,
 		Sub:   g.VLabel,
-		Href:  up + detailPath(region, g.Name),
+		Href:  up + detailPath(region.Name, g.Name),
 		Key:   base,
 		Base:  up + base,
 		Range: g.Ranges[0].Name,
@@ -179,10 +179,10 @@ func rangeImages(g *config.Graph) []rangeImage {
 	return out
 }
 
-func (s *Site) regionList() []string {
+func (s *Site) regionList() []config.Region {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]string(nil), s.regions...)
+	return append([]config.Region(nil), s.regions...)
 }
 
 func (s *Site) writePage(name, tmpl string, data any) error {

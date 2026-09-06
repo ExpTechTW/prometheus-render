@@ -39,10 +39,16 @@ regions:
   # Restrict discovery to these series. Without it, every value of the label
   # is used.
   match: '{job="nginx"}'
-  # Friendlier names. A value not listed keeps its own.
+  # What each region is called. The name is what appears on the pages, in the
+  # URLs and on the drawings themselves; the label value stays in the query,
+  # where the source knows it. A value not listed keeps its own name.
+  #
+  # Because it becomes a path segment, a name is letters, digits, dot, dash or
+  # underscore -- anything else is refused at load rather than quietly turned
+  # into something else in the URL.
   titles:
-    tnn: Tainan
-    tyo: Tokyo
+    tnn: core-tnn1
+    tyo: core-tyo1
 
 # Inherited by every graph below; any graph may override any of it.
 defaults:
@@ -107,7 +113,7 @@ graphs:
     vtitle: seconds
     peak: false
     y_min: 0
-    only_regions: [tnn]
+    only_regions: [tnn]   # the label value, or the name above
     series:
       - expr: palert_data_lag_seconds
         legend: lag

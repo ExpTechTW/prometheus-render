@@ -42,7 +42,7 @@ type Site struct {
 	// regions is what the last pass discovered to split by; drawn records the
 	// pairs that produced images, so the pages list only what exists.
 	mu      sync.Mutex
-	regions []string
+	regions []config.Region
 	drawn   map[string]bool
 	noData  map[string]bool
 	failed  map[string]bool
@@ -50,16 +50,16 @@ type Site struct {
 
 // job is one fetch: one graph, in one region, at one timescale.
 type job struct {
-	region string // empty for a graph that is not split
+	region config.Region // zero for a graph that is not split
 	graph  *config.Graph
 	rng    config.Range
 }
 
 func (j job) String() string {
-	if j.region == "" {
+	if j.region.Name == "" {
 		return j.graph.Name + "/" + j.rng.Name
 	}
-	return j.region + "/" + j.graph.Name + "/" + j.rng.Name
+	return j.region.Name + "/" + j.graph.Name + "/" + j.rng.Name
 }
 
 // Run draws the site once, then again on every tick until ctx is cancelled.
@@ -126,7 +126,7 @@ func (s *Site) Render(ctx context.Context) error {
 	for _, j := range jobs {
 		for _, t := range j.graph.Themes() {
 			for _, v := range j.graph.Variants() {
-				dir := filepath.Join(s.Cfg.Output.Dir, filepath.FromSlash(imageDir(j.region, j.graph.Name, t.Name, v)))
+				dir := filepath.Join(s.Cfg.Output.Dir, filepath.FromSlash(imageDir(j.region.Name, j.graph.Name, t.Name, v)))
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					return err
 				}
@@ -185,20 +185,24 @@ func (s *Site) Render(ctx context.Context) error {
 
 // discover finds the values the site is split by. A value that could reshape a
 // query is dropped with a note rather than used.
-func (s *Site) discover(ctx context.Context) ([]string, error) {
+func (s *Site) discover(ctx context.Context) ([]config.Region, error) {
 	found, err := s.Client.LabelValues(ctx, s.Cfg.Regions.Label, s.Cfg.Regions.Match, time.Time{}, time.Time{})
 	if err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, len(found))
+	out := make([]config.Region, 0, len(found))
 	for _, v := range found {
-		if !config.SafeRegion(v) {
-			s.logf("ignoring %s=%q: not usable as a name", s.Cfg.Regions.Label, v)
+		r := s.Cfg.Region(v)
+		// A value the config names is safe by construction: its name was
+		// checked at load. One it does not name has to stand on its own.
+		if !config.SafeRegion(v) || (r.Name == v && !config.SafePath(v)) {
+			s.logf("ignoring %s=%q: not usable as a name; give it one under regions.titles",
+				s.Cfg.Regions.Label, v)
 			continue
 		}
-		out = append(out, v)
+		out = append(out, r)
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
@@ -217,15 +221,15 @@ func (s *Site) jobs() []job {
 
 // scope lists the regions a graph is drawn for. A global graph, or any graph
 // on a site that is not split, is drawn once with no region.
-func (s *Site) scope(g *config.Graph) []string {
+func (s *Site) scope(g *config.Graph) []config.Region {
 	if g.Global || !s.Cfg.Split() {
-		return []string{""}
+		return []config.Region{{}}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var out []string
+	var out []config.Region
 	for _, r := range s.regions {
-		if g.InRegion(r) {
+		if g.InRegion(r.Value) {
 			out = append(out, r)
 		}
 	}
@@ -250,7 +254,7 @@ func (s *Site) draw(ctx context.Context, j job) error {
 		widest = config.VariantPeak
 	}
 	fetchWith, err := params.Build(
-		j.graph.Values(j.rng, j.region, j.graph.Theme, widest), params.Defaults{}, time.Now())
+		j.graph.Values(j.rng, j.region.Value, j.graph.Theme, widest), params.Defaults{}, time.Now())
 	if err != nil {
 		return fmt.Errorf("%s: %w", j, err)
 	}
@@ -262,10 +266,10 @@ func (s *Site) draw(ctx context.Context, j job) error {
 		// lives in one place, a node only just added. Say so and carry on
 		// rather than failing the pass, and leave it off the pages.
 		s.logf("no data: %s", j)
-		s.mark(&s.noData, j.region, j.graph.Name)
+		s.mark(&s.noData, j.region.Name, j.graph.Name)
 		return nil
 	case err != nil:
-		s.mark(&s.failed, j.region, j.graph.Name)
+		s.mark(&s.failed, j.region.Name, j.graph.Name)
 		return fmt.Errorf("%s: %w", j, err)
 	}
 
@@ -280,7 +284,7 @@ func (s *Site) draw(ctx context.Context, j job) error {
 			continue
 		}
 		for _, t := range j.graph.Themes() {
-			g, err := params.Build(j.graph.Values(j.rng, j.region, t.Theme, v), params.Defaults{}, time.Now())
+			g, err := params.Build(j.graph.Values(j.rng, j.region.Value, t.Theme, v), params.Defaults{}, time.Now())
 			if err != nil {
 				return fmt.Errorf("%s: %w", j, err)
 			}
@@ -289,14 +293,14 @@ func (s *Site) draw(ctx context.Context, j job) error {
 				return fmt.Errorf("%s: %w", j, err)
 			}
 			p := filepath.Join(s.Cfg.Output.Dir,
-				filepath.FromSlash(imagePath(j.region, j.graph.Name, t.Name, v, j.rng.Name)))
+				filepath.FromSlash(imagePath(j.region.Name, j.graph.Name, t.Name, v, j.rng.Name)))
 			if err := writeAtomic(p, img); err != nil {
 				return err
 			}
 		}
 	}
 
-	s.mark(&s.drawn, j.region, j.graph.Name)
+	s.mark(&s.drawn, j.region.Name, j.graph.Name)
 	return nil
 }
 

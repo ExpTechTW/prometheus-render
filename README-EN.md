@@ -182,7 +182,7 @@ about one place**, or **one thing across every place**.
 regions:
   label: region              # split on this; it also names the placeholder
   match: '{job="nginx"}'     # discover values from these series only
-  titles: {tnn: Tainan, tyo: Tokyo}
+  titles: {tnn: core-tnn1, tyo: core-tyo1}   # used in pages, URLs and captions
 
 graphs:
   - name: traffic
@@ -195,6 +195,12 @@ graphs:
   - name: total
     global: true             # not split at all
 ```
+
+The name under `titles` is what the site calls a region everywhere -- pages,
+URLs and the captions on the drawings -- while the label value stays in the
+query. Because it becomes a path segment, a name is letters, digits, dot, dash
+or underscore; anything else is refused at load rather than quietly becoming
+something else in the URL.
 
 **The values are discovered from the data**, so a node arriving or leaving
 changes the pages without editing the file. A graph with nothing to show in a

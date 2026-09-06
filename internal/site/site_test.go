@@ -391,7 +391,7 @@ output:
   workers: 4
 regions:
   label: region
-  titles: {tnn: Tainan, tyo: Tokyo}
+  titles: {tnn: core-tnn1, tyo: core-tyo1}
 defaults:
   width: 300
   height: 120
@@ -456,9 +456,9 @@ func TestBothViewsExist(t *testing.T) {
 
 	for _, name := range []string{
 		"index.html",
-		"region/tnn.html", "region/tyo.html", // everything about one place
+		"region/core-tnn1.html", "region/core-tyo1.html", // everything about one place
 		"graph/traffic.html", "graph/lag.html", // one thing across places
-		"tnn/traffic.html", "tyo/traffic.html",
+		"core-tnn1/traffic.html", "core-tyo1/traffic.html",
 		"total.html", // a global graph keeps the unsplit layout
 	} {
 		if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, name)); err != nil {
@@ -467,20 +467,20 @@ func TestBothViewsExist(t *testing.T) {
 	}
 
 	index := read(t, s, "index.html")
-	for _, want := range []string{"By region", "By graph", "Tainan", "Tokyo", "HTTP traffic"} {
+	for _, want := range []string{"By region", "By graph", "core-tnn1", "core-tyo1", "HTTP traffic"} {
 		if !strings.Contains(index, want) {
 			t.Errorf("index.html is missing %q", want)
 		}
 	}
 	// only_regions keeps a graph out of the regions it does not belong to.
-	if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, "tyo/lag.html")); err == nil {
+	if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, "core-tyo1/lag.html")); err == nil {
 		t.Error("lag was drawn for a region it is not in")
 	}
-	if strings.Contains(read(t, s, "region/tyo.html"), "Sensor lag") {
+	if strings.Contains(read(t, s, "region/core-tyo1.html"), "Sensor lag") {
 		t.Error("region/tyo.html lists a graph that is not in that region")
 	}
 	// A global graph belongs to no region.
-	if strings.Contains(read(t, s, "region/tnn.html"), "Every region") {
+	if strings.Contains(read(t, s, "region/core-tnn1.html"), "Every region") {
 		t.Error("a global graph was listed under a region")
 	}
 }
@@ -495,21 +495,21 @@ func TestEveryThemeAndVariantIsDrawn(t *testing.T) {
 
 	// A graph that asks for peaks gets both variants, in both palettes.
 	for _, name := range []string{
-		"tnn/traffic/light/plain/1d.png", "tnn/traffic/light/peak/1d.png",
-		"tnn/traffic/dark/plain/1d.png", "tnn/traffic/dark/peak/1d.png",
+		"core-tnn1/traffic/light/plain/1d.png", "core-tnn1/traffic/light/peak/1d.png",
+		"core-tnn1/traffic/dark/plain/1d.png", "core-tnn1/traffic/dark/peak/1d.png",
 	} {
 		if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, name)); err != nil {
 			t.Errorf("missing %s", name)
 		}
 	}
 	// One that does not keeps only the averages, still in both palettes.
-	if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, "tnn/lag/light/plain/1d.png")); err != nil {
+	if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, "core-tnn1/lag/light/plain/1d.png")); err != nil {
 		t.Errorf("missing the plain lag image: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, "tnn/lag/light/peak/1d.png")); err == nil {
+	if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, "core-tnn1/lag/light/peak/1d.png")); err == nil {
 		t.Error("a graph without peaks should have no peak variant")
 	}
-	if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, "tnn/lag/dark/plain/1d.png")); err != nil {
+	if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, "core-tnn1/lag/dark/plain/1d.png")); err != nil {
 		t.Errorf("missing the dark lag image: %v", err)
 	}
 
@@ -651,7 +651,7 @@ func TestPeakSwitchesPerDrawing(t *testing.T) {
 		t.Fatalf("Render: %v", err)
 	}
 
-	page := read(t, s, "tnn/traffic.html")
+	page := read(t, s, "core-tnn1/traffic.html")
 	buttons := strings.Count(page, `<button type="button" data-peak-toggle`)
 	figures := strings.Count(page, `<figure data-key=`)
 	if figures == 0 {
@@ -662,7 +662,7 @@ func TestPeakSwitchesPerDrawing(t *testing.T) {
 	}
 
 	// Each carries its own key, so one timescale's choice is not another's.
-	for _, want := range []string{`data-key="tnn/traffic/1d"`} {
+	for _, want := range []string{`data-key="core-tnn1/traffic/1d"`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("page is missing %s", want)
 		}
@@ -672,51 +672,67 @@ func TestPeakSwitchesPerDrawing(t *testing.T) {
 	}
 
 	// A graph without peaks offers no button at all.
-	if lag := read(t, s, "tnn/lag.html"); strings.Contains(lag, "data-peak-toggle") &&
+	if lag := read(t, s, "core-tnn1/lag.html"); strings.Contains(lag, "data-peak-toggle") &&
 		strings.Contains(lag, `<button type="button" data-peak-toggle`) {
 		t.Error("a graph without peaks should offer no peak button")
 	}
 }
 
-// A page redrawn on a timer must not be served from a cache that has stopped
-// checking: a stale status page looks current, which is worse than an empty
-// one.
-func TestServedFilesAskToBeRevalidated(t *testing.T) {
-	s := build(t, newSource(t), 2, 0, "")
+// A region is named once, in the config, and that name is what the site is
+// built from: the paths, the links and the captions. The label value stays in
+// the query, where the source knows it.
+func TestPathsFollowTheConfiguredName(t *testing.T) {
+	src := newSource(t)
+	src.labels = []string{"tnn"}
+	s := buildSplit(t, src, "")
 	if err := s.Render(context.Background()); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	srv := httptest.NewServer(s.Handler())
-	defer srv.Close()
 
-	for _, path := range []string{"/", "/index.html", "/traffic/light/plain/1d.png"} {
-		resp, err := srv.Client().Get(srv.URL + path)
-		if err != nil {
-			t.Fatalf("GET %s: %v", path, err)
+	// Nothing is filed under the raw label value.
+	for _, gone := range []string{"tnn", "region/tnn.html", "tnn/traffic.html"} {
+		if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, gone)); err == nil {
+			t.Errorf("%s exists: the raw label value is still shaping the site", gone)
 		}
-		resp.Body.Close()
-		if got := resp.Header.Get("Cache-Control"); got != "no-cache" {
-			t.Errorf("GET %s: Cache-Control = %q, want no-cache", path, got)
-		}
-		if resp.Header.Get("Last-Modified") == "" {
-			t.Errorf("GET %s: no Last-Modified, so revalidating would cost the whole file", path)
+	}
+	for _, want := range []string{
+		"region/core-tnn1.html", "core-tnn1/traffic.html",
+		"core-tnn1/traffic/light/plain/1d.png",
+	} {
+		if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, want)); err != nil {
+			t.Errorf("missing %s", want)
 		}
 	}
 
-	// Revalidating an unchanged file must be cheap.
-	req, _ := http.NewRequest("GET", srv.URL+"/traffic/light/plain/1d.png", nil)
-	first, err := srv.Client().Get(srv.URL + "/traffic/light/plain/1d.png")
-	if err != nil {
-		t.Fatal(err)
+	if index := read(t, s, "index.html"); strings.Contains(index, `"region/tnn.html"`) {
+		t.Error("index.html links the raw label value")
 	}
-	first.Body.Close()
-	req.Header.Set("If-Modified-Since", first.Header.Get("Last-Modified"))
-	resp, err := srv.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
+	// But the query still asks the source what it understands.
+	var joined string
+	for _, q := range src.queries() {
+		joined += q + "\n"
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotModified {
-		t.Errorf("conditional request returned %d, want 304", resp.StatusCode)
+	if !strings.Contains(joined, `region="tnn"`) {
+		t.Error("the query no longer uses the label value")
+	}
+	if strings.Contains(joined, `region="core-tnn1"`) {
+		t.Error("the presentation name leaked into the query")
+	}
+}
+
+// A name becomes a path segment, so one that cannot be is refused at load
+// rather than turning into something else in the URL.
+func TestUnusableRegionNamesAreRefused(t *testing.T) {
+	for _, name := range []string{"a/b", "../x", "", "with space", "region"} {
+		if _, err := config.Parse([]byte(`
+regions:
+  label: region
+  titles: {tnn: "` + name + `"}
+graphs:
+  - name: a
+    series: [{expr: up}]
+`)); err == nil {
+			t.Errorf("accepted %q as a region name", name)
+		}
 	}
 }
