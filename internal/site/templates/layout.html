@@ -1,5 +1,5 @@
 {{define "head"}}<!doctype html>
-<html lang="en">
+<html lang="en" data-up="{{.Up}}" data-version="{{.Version}}" data-interval="{{.Interval}}">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}}</title>
@@ -28,6 +28,7 @@
   .gh { display:inline-flex; align-items:center; gap:.4rem; color:var(--dim); text-decoration:none }
   .gh:hover { color:var(--fg) }
   .gh svg { width:18px; height:18px; fill:currentColor }
+  .tick { color:var(--dim); font-size:12px; font-variant-numeric:tabular-nums }
   button { font:inherit; font-size:12px; color:var(--dim); background:transparent;
            border:1px solid var(--rule); border-radius:5px; padding:.2rem .55rem; cursor:pointer }
   button:hover { color:var(--fg) }
@@ -64,6 +65,7 @@
 <header>
   <h1><a href="{{.Up}}index.html">{{.SiteTitle}}</a></h1>
   <span class="spacer"></span>
+  <span class="tick" data-tick></span>
   <button type="button" data-theme-toggle>Dark</button>
   <a class="gh" href="https://github.com/ExpTechTW/prometheus-render"
      rel="noopener" title="prometheus-render on GitHub">
@@ -83,7 +85,7 @@
   </figcaption>
   <a href="{{.Href}}"><img alt="{{.Title}}"
      data-base="{{.Base}}" data-range="{{.Range}}"
-     src="{{.Base}}/light/plain/{{.Range}}.png"></a>
+     src="{{.Base}}/light/plain/{{.Range}}.png?v={{.Version}}"></a>
 </figure>
 {{end}}
 
@@ -97,22 +99,57 @@
   var TK = 'pr.theme', VK = 'pr.variant.';
   function get(k, d) { try { var v = localStorage.getItem(k); return v === null ? d : v } catch (e) { return d } }
   function put(k, v) { try { localStorage.setItem(k, v) } catch (e) {} }
+  function each(sel, fn) { Array.prototype.forEach.call(document.querySelectorAll(sel), fn) }
+
+  var root = document.documentElement;
+  var up = root.getAttribute('data-up') || '';
+  var version = root.getAttribute('data-version') || '';
+  var interval = parseInt(root.getAttribute('data-interval') || '0', 10);
+  var nextAt = interval > 0 ? (parseInt(version, 10) + interval) * 1000 : 0;
 
   var dark = false;
   try { dark = matchMedia('(prefers-color-scheme: dark)').matches } catch (e) {}
   var theme = get(TK, dark ? 'dark' : 'light');
 
-  function each(sel, fn) { Array.prototype.forEach.call(document.querySelectorAll(sel), fn) }
-
+  // The version rides on the URL, so a picture is fetched again exactly when
+  // there is a new one. Nothing is re-requested on a timer.
   function paint() {
-    document.documentElement.setAttribute('data-theme', theme);
+    root.setAttribute('data-theme', theme);
     each('[data-theme-toggle]', function (b) { b.textContent = theme === 'dark' ? 'Light' : 'Dark' });
     each('img[data-base]', function (img) {
       var box = img.closest('[data-variant]');
       var v = box ? box.getAttribute('data-variant') : 'plain';
-      var src = img.getAttribute('data-base') + '/' + theme + '/' + v + '/' + img.getAttribute('data-range') + '.png';
+      var src = img.getAttribute('data-base') + '/' + theme + '/' + v + '/' +
+                img.getAttribute('data-range') + '.png?v=' + version;
       if (img.getAttribute('src') !== src) img.setAttribute('src', src);
     });
+  }
+
+  function tick() {
+    var el = document.querySelector('[data-tick]');
+    if (!el) return;
+    if (!interval) { el.textContent = ''; return; }
+    var left = Math.round((nextAt - Date.now()) / 1000);
+    if (left <= 0) { el.textContent = 'updating\u2026'; return; }
+    var m = Math.floor(left / 60), sec = left % 60;
+    el.textContent = 'next in ' + m + ':' + (sec < 10 ? '0' : '') + sec;
+  }
+
+  // A few bytes, so checking often costs nothing. The first call runs at load:
+  // the page itself may have come from a cache, and this is what corrects it.
+  function poll() {
+    fetch(up + 'version.json', { cache: 'no-store' })
+      .then(function (r) { return r.json() })
+      .then(function (v) {
+        if (String(v.version) !== version) {
+          version = String(v.version);
+          interval = v.interval || interval;
+          nextAt = interval > 0 ? (v.version + interval) * 1000 : 0;
+          paint();
+        }
+        tick();
+      })
+      .catch(function () {});
   }
 
   // Each drawing remembers its own choice, so it survives following a link.
@@ -144,6 +181,10 @@
   });
 
   paint();
+  tick();
+  poll();
+  setInterval(tick, 1000);
+  if (interval > 0) setInterval(poll, 15000);
 })();
 </script>
 </html>

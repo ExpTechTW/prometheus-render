@@ -760,3 +760,72 @@ func TestDrawingsAreStampedInTheConfiguredZone(t *testing.T) {
 		t.Errorf("the page and the drawings disagree about when: %q", minute)
 	}
 }
+
+// A page that came from a cache still has to end up showing the current
+// drawings, and a page left open has to notice the next pass. Both hang on the
+// version: it rides on every image URL, and the pages poll for it.
+func TestPagesCarryAndPublishTheVersion(t *testing.T) {
+	s := build(t, newSource(t), 4, 0, "")
+	s.Cfg.Output.Interval = config.Duration(5 * time.Minute)
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	var v struct {
+		Version  int64  `json:"version"`
+		Interval int    `json:"interval"`
+		Updated  string `json:"updated"`
+	}
+	if err := json.Unmarshal([]byte(read(t, s, "version.json")), &v); err != nil {
+		t.Fatalf("version.json: %v", err)
+	}
+	if v.Version == 0 {
+		t.Error("version.json carries no version")
+	}
+	if v.Interval != 300 {
+		t.Errorf("interval = %d, want the configured 300", v.Interval)
+	}
+
+	// Every page hands the version to its script, and every image URL carries
+	// it, so a browser refetches exactly when there is something new.
+	want := strconv.FormatInt(v.Version, 10)
+	for _, name := range []string{"index.html", "traffic.html"} {
+		body := read(t, s, name)
+		if !strings.Contains(body, `data-version="`+want+`"`) {
+			t.Errorf("%s does not carry the version", name)
+		}
+		if !strings.Contains(body, `data-interval="300"`) {
+			t.Errorf("%s does not carry the interval to count down", name)
+		}
+		if !strings.Contains(body, ".png?v="+want) {
+			t.Errorf("%s has an image URL without the version", name)
+		}
+	}
+
+	// A nested page has to be able to reach the version file.
+	if !strings.Contains(read(t, s, "traffic.html"), `data-up=""`) {
+		t.Error("the page does not say where the site root is")
+	}
+}
+
+// A second pass moves the version on, which is what makes an open page swap
+// its images.
+func TestASecondPassMovesTheVersionOn(t *testing.T) {
+	s := build(t, newSource(t), 4, 0, "")
+	s.Cfg.Output.Interval = config.Duration(5 * time.Minute)
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	first := s.version()
+
+	time.Sleep(1100 * time.Millisecond)
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if second := s.version(); second <= first {
+		t.Errorf("version did not advance: %d then %d", first, second)
+	}
+	if !strings.Contains(read(t, s, "index.html"), ".png?v="+strconv.FormatInt(s.version(), 10)) {
+		t.Error("the page still points at the previous pass")
+	}
+}

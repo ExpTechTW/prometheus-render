@@ -202,6 +202,13 @@ query. Because it becomes a path segment, a name is letters, digits, dot, dash
 or underscore; anything else is refused at load rather than quietly becoming
 something else in the URL.
 
+Pages poll a few-byte `version.json` every 15 seconds. Image URLs carry the
+version of the pass that drew them, so a browser refetches a picture exactly
+when there is a new one rather than on a timer -- the caches in front still
+work. The first poll runs at load, so a page served from a cache still ends up
+showing the current drawings. A countdown in the header says how long until the
+next pass.
+
 Each drawing carries the time it was made in its bottom right corner, in the
 same zone -- so a picture that has been saved or passed on still says how old
 it is.

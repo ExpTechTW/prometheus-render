@@ -44,6 +44,7 @@ type Site struct {
 	mu      sync.Mutex
 	regions []config.Region
 	stamp   string
+	epoch   int64
 	drawn   map[string]bool
 	noData  map[string]bool
 	failed  map[string]bool
@@ -122,8 +123,10 @@ func (s *Site) Render(ctx context.Context) error {
 
 	// One stamp for the whole pass, in the zone the graphs are drawn in, so
 	// every image it produces agrees about when it was made.
+	drawnAt := time.Now()
 	s.mu.Lock()
-	s.stamp = "Updated " + time.Now().In(s.Cfg.Location()).Format("2006-01-02 15:04:05 MST")
+	s.stamp = "Updated " + drawnAt.In(s.Cfg.Location()).Format("2006-01-02 15:04:05 MST")
+	s.epoch = drawnAt.Unix()
 	s.mu.Unlock()
 
 	jobs := s.jobs()
@@ -321,6 +324,15 @@ func (s *Site) stampedAt() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.stamp
+}
+
+// version identifies this pass. It rides on every image URL, so a page asks
+// for a new file only when there is one -- which keeps the pages current
+// without spending a cache on images that have not changed.
+func (s *Site) version() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.epoch
 }
 
 func (s *Site) mark(set *map[string]bool, region, graph string) {

@@ -3,6 +3,7 @@ package site
 import (
 	"bytes"
 	"embed"
+	"encoding/json"
 	"html/template"
 	"path/filepath"
 	"time"
@@ -25,6 +26,16 @@ type page struct {
 	SiteTitle string
 	Now       string
 	Up        string
+
+	// Version identifies the pass that drew this page. It is appended to every
+	// image URL, so a browser fetches a picture again exactly when there is a
+	// new one -- rather than on a timer, which would spend the cache on files
+	// that had not changed.
+	Version int64
+
+	// Interval is how often the site is redrawn, in seconds, for the page to
+	// count down to. Zero means it is drawn once and not again.
+	Interval int
 }
 
 // link is an entry in one of the index's two lists.
@@ -36,13 +47,14 @@ type link struct {
 // card is one drawing as it appears in a list: the finest timescale, linking
 // through to every timescale of it.
 type card struct {
-	Title string
-	Sub   string
-	Href  string
-	Key   string // identifies the drawing to the variant switch
-	Base  string // image path up to the palette, ready for the page to finish
-	Range string
-	Peak  bool
+	Title   string
+	Sub     string
+	Href    string
+	Key     string // identifies the drawing to the variant switch
+	Base    string // image path up to the palette, ready for the page to finish
+	Range   string
+	Peak    bool
+	Version int64 // the pass that drew it, so the URL changes only when it does
 }
 
 type indexPage struct {
@@ -77,8 +89,13 @@ func (s *Site) writePages() error {
 	now := time.Now().In(s.Cfg.Location()).Format("2006-01-02 15:04:05 MST")
 	title := s.Cfg.Output.Title
 
+	version := s.version()
+	interval := int(s.Cfg.Output.Interval.Duration().Seconds())
 	chrome := func(name, pageTitle string) page {
-		return page{Title: pageTitle, SiteTitle: title, Now: now, Up: upTo(name)}
+		return page{
+			Title: pageTitle, SiteTitle: title, Now: now, Up: upTo(name),
+			Version: version, Interval: interval,
+		}
 	}
 
 	idx := indexPage{page: chrome("index.html", title)}
@@ -153,7 +170,24 @@ func (s *Site) writePages() error {
 		}
 	}
 
+	if err := s.writeVersion(version, interval, now); err != nil {
+		return err
+	}
 	return s.writePage("index.html", "index.html", idx)
+}
+
+// writeVersion publishes what a page polls to learn that a new pass has
+// happened: a few bytes, so checking often costs nothing.
+func (s *Site) writeVersion(version int64, interval int, now string) error {
+	b, err := json.Marshal(struct {
+		Version  int64  `json:"version"`
+		Interval int    `json:"interval"`
+		Updated  string `json:"updated"`
+	}{version, interval, now})
+	if err != nil {
+		return err
+	}
+	return writeAtomic(filepath.Join(s.Cfg.Output.Dir, "version.json"), b)
 }
 
 // card describes one drawing as seen from the page at from.
@@ -161,13 +195,14 @@ func (s *Site) card(g *config.Graph, region config.Region, from string) card {
 	up := upTo(from)
 	base := imageBase(region.Name, g.Name)
 	return card{
-		Title: g.Title,
-		Sub:   g.VLabel,
-		Href:  up + detailPath(region.Name, g.Name),
-		Key:   base,
-		Base:  up + base,
-		Range: g.Ranges[0].Name,
-		Peak:  g.Peaks(),
+		Title:   g.Title,
+		Sub:     g.VLabel,
+		Href:    up + detailPath(region.Name, g.Name),
+		Key:     base,
+		Base:    up + base,
+		Range:   g.Ranges[0].Name,
+		Peak:    g.Peaks(),
+		Version: s.version(),
 	}
 }
 
