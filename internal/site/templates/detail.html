@@ -1,15 +1,14 @@
 {{template "head" .}}
 <p class="crumb"><a href="{{.Up}}index.html">&larr; {{.SiteTitle}}</a></p>
-<div data-key="{{.Key}}" data-variant="plain">
-  {{if .Peak}}
-  <p><button type="button" data-peak-toggle aria-pressed="false">peak</button></p>
-  {{end}}
-  {{range .Images}}
-  <figure>
-    <figcaption>{{.Title}}</figcaption>
-    <img alt="{{.Title}}" data-base="{{$.Base}}" data-range="{{.Range}}"
-         src="{{$.Base}}/light/plain/{{.Range}}.png">
-  </figure>
-  {{end}}
-</div>
+{{range .Images}}
+<figure data-key="{{$.Key}}/{{.Range}}" data-variant="plain">
+  <figcaption>
+    {{.Title}}
+    <span class="spacer"></span>
+    {{if $.Peak}}<button type="button" data-peak-toggle aria-pressed="false">peak</button>{{end}}
+  </figcaption>
+  <img alt="{{.Title}}" data-base="{{$.Base}}" data-range="{{.Range}}"
+       src="{{$.Base}}/light/plain/{{.Range}}.png">
+</figure>
+{{end}}
 {{template "foot" .}}

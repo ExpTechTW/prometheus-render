@@ -605,3 +605,75 @@ func TestEveryImageAPageOffersExists(t *testing.T) {
 	}
 	t.Logf("checked %d image URLs", checked)
 }
+
+// The time under a page should agree with the time along the axes above it,
+// so both follow the config rather than whatever zone the container runs in.
+func TestFooterFollowsTheConfiguredTimezone(t *testing.T) {
+	for _, tc := range []struct{ tz, want string }{
+		{"Asia/Taipei", "CST"},
+		{"UTC", "UTC"},
+		{"America/New_York", ""}, // EST or EDT, depending on the date
+	} {
+		t.Run(tc.tz, func(t *testing.T) {
+			s := build(t, newSource(t), 2, 0, "")
+			s.Cfg.Defaults.TZ = tc.tz
+			if err := s.Render(context.Background()); err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+
+			index := read(t, s, "index.html")
+			if !strings.Contains(index, "Updated ") {
+				t.Error("the footer does not say when it was updated")
+			}
+			loc, err := time.LoadLocation(tc.tz)
+			if err != nil {
+				t.Fatalf("LoadLocation: %v", err)
+			}
+			want := tc.want
+			if want == "" {
+				want = time.Now().In(loc).Format("MST")
+			}
+			stamp := time.Now().In(loc).Format("2006-01-02 15:")
+			if !strings.Contains(index, stamp) || !strings.Contains(index, want) {
+				t.Errorf("footer is not in %s: want %q and %q", tc.tz, stamp, want)
+			}
+		})
+	}
+}
+
+// The peak switch belongs to a drawing, not to a page: a detail page shows
+// four timescales and each is toggled on its own.
+func TestPeakSwitchesPerDrawing(t *testing.T) {
+	src := newSource(t)
+	src.labels = []string{"tnn"}
+	s := buildSplit(t, src, "")
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	page := read(t, s, "tnn/traffic.html")
+	buttons := strings.Count(page, `<button type="button" data-peak-toggle`)
+	figures := strings.Count(page, `<figure data-key=`)
+	if figures == 0 {
+		t.Fatal("the detail page has no figures")
+	}
+	if buttons != figures {
+		t.Errorf("%d buttons for %d drawings: the switch is not per drawing", buttons, figures)
+	}
+
+	// Each carries its own key, so one timescale's choice is not another's.
+	for _, want := range []string{`data-key="tnn/traffic/1d"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page is missing %s", want)
+		}
+	}
+	if strings.Contains(page, `<div data-key=`) {
+		t.Error("a page-wide wrapper still governs every drawing at once")
+	}
+
+	// A graph without peaks offers no button at all.
+	if lag := read(t, s, "tnn/lag.html"); strings.Contains(lag, "data-peak-toggle") &&
+		strings.Contains(lag, `<button type="button" data-peak-toggle`) {
+		t.Error("a graph without peaks should offer no peak button")
+	}
+}
