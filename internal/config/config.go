@@ -172,7 +172,10 @@ type Graph struct {
 	Ranges    []Range  `yaml:"ranges"`
 
 	// label is the region label, copied in so Values can find the placeholder.
-	label string `yaml:"-"`
+	// titles is the names to present regions under, so a drawing is captioned
+	// the way the config asks rather than with the raw label value.
+	label  string            `yaml:"-"`
+	titles map[string]string `yaml:"-"`
 }
 
 // Series is one expression drawn on a graph.
@@ -286,6 +289,7 @@ func Parse(b []byte) (*Config, error) {
 	seen := make(map[string]bool, len(c.Graphs))
 	for i, g := range c.Graphs {
 		g.label = c.Regions.Label
+		g.titles = c.Regions.Titles
 		if err := g.normalise(c.Defaults); err != nil {
 			return nil, fmt.Errorf("config: graph %d: %w", i, err)
 		}
@@ -517,11 +521,23 @@ func (g *Graph) Values(r Range, region, theme, variant string) url.Values {
 }
 
 // pageTitle names the drawing, saying which region it is of when there is one.
+//
+// The region is named the way the config asks. The raw label value belongs in
+// the query and the path, not on the picture.
 func (g *Graph) pageTitle(region string) string {
 	if region == "" {
 		return g.Title
 	}
-	return g.Title + " - " + region
+	return g.Title + " - " + g.regionTitle(region)
+}
+
+// regionTitle is the name a region is presented under, falling back to the
+// label value when the config gives it none.
+func (g *Graph) regionTitle(region string) string {
+	if t, ok := g.titles[region]; ok && t != "" {
+		return t
+	}
+	return region
 }
 
 // expr puts the region into an expression. The placeholder is the label being

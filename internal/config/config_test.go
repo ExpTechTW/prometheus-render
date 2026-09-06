@@ -255,3 +255,35 @@ graphs:
 		t.Errorf("per-range override ignored: %q", g.Ranges[1].PeakStep)
 	}
 }
+
+// The label value is what the query needs; the picture should carry the name
+// the config chose for it.
+func TestDrawingsAreCaptionedFromTheConfig(t *testing.T) {
+	c := parse(t, `
+regions:
+  label: region
+  titles: {tnn: core-tnn1}
+defaults:
+  ranges: [{name: 1d, from: -1d, step: 5m}]
+graphs:
+  - name: traffic
+    title: HTTP traffic
+    series: [{expr: 'up{region="$region"}', legend: RX}]
+`)
+	g := c.Graphs[0]
+
+	named := g.Values(g.Ranges[0], "tnn", g.Theme, VariantPlain)
+	if got := named.Get("title"); got != "HTTP traffic - core-tnn1" {
+		t.Errorf("title = %q, want the configured name", got)
+	}
+	// The query still uses the label value, which is what the source knows.
+	if got := named.Get("target"); got != `up{region="tnn"}` {
+		t.Errorf("target = %q", got)
+	}
+
+	// A region the config does not name keeps its own.
+	unnamed := g.Values(g.Ranges[0], "tyo", g.Theme, VariantPlain)
+	if got := unnamed.Get("title"); got != "HTTP traffic - tyo" {
+		t.Errorf("title = %q", got)
+	}
+}
