@@ -5,59 +5,48 @@
 <title>{{.Title}}</title>
 <style>
   :root { color-scheme: light dark;
-          --fg:#1a1a1a; --dim:#6a6a6a; --bg:#fff; --panel:#f6f6f4; --rule:#dcdcd6; --link:#0b57a4 }
+          --fg:#1a1a1a; --dim:#6a6a6a; --bg:#fff; --rule:#e2e2dd; --link:#0b57a4 }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --fg:#e6e6e6; --dim:#9a9a9a; --bg:#16171a; --panel:#1e2024; --rule:#33363c; --link:#78b4ff }
+      --fg:#e6e6e6; --dim:#9a9a9a; --bg:#16171a; --rule:#2c2f34; --link:#78b4ff }
   }
-  /* The toggle wins over the system setting, in both directions. */
-  :root[data-theme="dark"] {
-    color-scheme: dark;
-    --fg:#e6e6e6; --dim:#9a9a9a; --bg:#16171a; --panel:#1e2024; --rule:#33363c; --link:#78b4ff }
+  :root[data-theme="dark"] { color-scheme: dark;
+    --fg:#e6e6e6; --dim:#9a9a9a; --bg:#16171a; --rule:#2c2f34; --link:#78b4ff }
   :root[data-theme="light"] { color-scheme: light }
+
   * { box-sizing: border-box }
   body { margin:0; background:var(--bg); color:var(--fg);
-         font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif }
+         font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif }
   a { color:var(--link) }
-  header, footer { display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;
-                   padding:.9rem 1.25rem; border-bottom:1px solid var(--rule) }
-  footer { border-bottom:0; border-top:1px solid var(--rule); color:var(--dim); font-size:12px }
-  header h1 { margin:0; font-size:16px; font-weight:600; letter-spacing:.01em }
-  header h1 a { color:inherit; text-decoration:none }
+  main { padding:1rem 1.25rem 2rem; max-width:1100px; margin:0 auto }
+
+  header, footer { display:flex; align-items:center; gap:1rem; flex-wrap:wrap;
+                   padding:.75rem 1.25rem; max-width:1100px; margin:0 auto }
+  header { border-bottom:1px solid var(--rule) }
+  footer { border-top:1px solid var(--rule); color:var(--dim); font-size:12px }
+  footer a { display:inline-flex; align-items:center; gap:.35rem }
+  footer svg { width:15px; height:15px; fill:currentColor }
+  header b { font-weight:600 }
+  header a, footer a { color:inherit; text-decoration:none }
+  header a:hover, footer a:hover { text-decoration:underline }
   .spacer { flex:1 }
-  .gh { display:inline-flex; align-items:center; gap:.4rem; color:var(--dim); text-decoration:none }
-  .gh:hover { color:var(--fg) }
-  .gh svg { width:18px; height:18px; fill:currentColor }
   .tick { color:var(--dim); font-size:12px; font-variant-numeric:tabular-nums }
-  button { font:inherit; font-size:12px; color:var(--dim); background:transparent;
-           border:1px solid var(--rule); border-radius:5px; padding:.2rem .55rem; cursor:pointer }
-  button:hover { color:var(--fg) }
-  button[aria-pressed="true"] { color:var(--fg); border-color:var(--fg) }
-  main { padding:1.25rem; max-width:1100px; margin:0 auto }
-  nav.axes { display:grid; gap:1.25rem; grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
-             margin-bottom:1.5rem }
-  nav.axes h2 { margin:0 0 .5rem; font-size:13px; font-weight:600; color:var(--dim);
-                text-transform:uppercase; letter-spacing:.06em }
-  nav.axes ul { margin:0; padding:0; list-style:none }
-  nav.axes li { padding:.15rem 0 }
-  /* Graphs carry their own background, so each sits on a plain panel rather
-     than being tinted by the page around it. */
-  figure { margin:0 0 1.5rem; background:var(--panel);
-           border:1px solid var(--rule); border-radius:6px; overflow:hidden }
-  figcaption { display:flex; align-items:center; gap:.6rem; flex-wrap:wrap;
-               padding:.5rem .85rem; border-bottom:1px solid var(--rule);
-               font-size:13px; font-weight:600 }
-  figcaption a { text-decoration:none }
-  figcaption a:hover { text-decoration:underline }
-  figure img { display:block; max-width:100%; height:auto; padding:.6rem }
-  .sub { font-weight:400; color:var(--dim) }
-  .crumb { margin:0 0 1rem; color:var(--dim) }
-  .empty { color:var(--dim); padding:2rem 0 }
+  button { font:inherit; font-size:12px; color:var(--dim); background:none;
+           border:1px solid var(--rule); border-radius:4px; padding:.15rem .5rem; cursor:pointer }
+  button:hover, button[aria-pressed="true"] { color:var(--fg) }
+
+  /* The drawings bring their own frame and background, so nothing is wrapped
+     around them. A caption line and some air is the whole of it. */
+  figure { margin:0 0 1.75rem }
+  figcaption { display:flex; align-items:center; gap:.6rem;
+               margin-bottom:.35rem; font-size:13px; color:var(--dim) }
+  figcaption b { color:var(--fg); font-weight:600 }
+  figure img { display:block; max-width:100%; height:auto }
+
+  ul.links { margin:0 0 1.5rem; padding:0; list-style:none;
+             display:flex; flex-wrap:wrap; gap:.25rem 1rem }
+  ul.links b { color:var(--dim); font-weight:400; margin-right:.25rem }
 </style>
-<!-- data-cfasync="false" keeps Cloudflare's Rocket Loader from taking these
-     over. It rewrites the type attribute to something the browser will not
-     run and executes the script itself, later and out of order, which leaves
-     the page without its timer, its toggles or its theme. -->
 <script data-cfasync="false">
   // Set before anything paints, so a dark page never flashes light first.
   try {
@@ -67,37 +56,35 @@
   } catch (e) {}
 </script>
 <header>
-  <h1><a href="{{.Up}}index.html">{{.SiteTitle}}</a></h1>
+  <b><a href="{{.Up}}index.html">{{.SiteTitle}}</a></b>
   <span class="spacer"></span>
   <span class="tick" data-tick></span>
   <button type="button" data-theme-toggle>Dark</button>
-  <a class="gh" href="https://github.com/ExpTechTW/prometheus-render"
-     rel="noopener" title="prometheus-render on GitHub">
-    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-    prometheus-render
-  </a>
 </header>
 <main>{{end}}
 
 {{define "card"}}
 <figure data-key="{{.Key}}" data-variant="plain">
   <figcaption>
-    <a href="{{.Href}}">{{.Title}}</a>
-    {{if .Sub}}<span class="sub">{{.Sub}}</span>{{end}}
+    <b><a href="{{.Href}}">{{.Title}}</a></b>
+    {{if .Sub}}<span>{{.Sub}}</span>{{end}}
     <span class="spacer"></span>
     {{if .Peak}}<button type="button" data-peak-toggle aria-pressed="false">peak</button>{{end}}
   </figcaption>
-  <a href="{{.Href}}"><img alt="{{.Title}}"
-     data-base="{{.Base}}" data-range="{{.Range}}"
-     src="{{.Base}}/light/plain/{{.Range}}.png"></a>
+  <img alt="{{.Title}}" data-base="{{.Base}}" data-range="{{.Range}}">
 </figure>
 {{end}}
 
 {{define "foot"}}</main>
 <footer>
-  Updated {{.Now}} by
-  <a href="https://github.com/ExpTechTW/prometheus-render" rel="noopener">prometheus-render</a>.
+  <span>Updated {{.Now}}</span>
+  <span class="spacer"></span>
+  <a href="https://github.com/ExpTechTW/prometheus-render" rel="noopener">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+    prometheus-render
+  </a>
 </footer>
+
 <script data-cfasync="false">
 (function () {
   var TK = 'pr.theme', VK = 'pr.variant.';
@@ -113,9 +100,9 @@
   try { dark = matchMedia('(prefers-color-scheme: dark)').matches } catch (e) {}
   var theme = get(TK, dark ? 'dark' : 'light');
 
-  // Which drawing an element wants: the palette and the variant pick among
-  // files the site already holds. The address never carries a version, so the
-  // caches in front of it keep their entries.
+  // Which file an element wants. The palette and the variant choose among
+  // drawings the site already holds; the address never carries a version, so
+  // the caches in front of it keep their entries.
   function srcFor(img) {
     var box = img.closest('[data-variant]');
     return img.getAttribute('data-base') + '/' + theme + '/' +
@@ -123,41 +110,21 @@
            img.getAttribute('data-range') + '.png';
   }
 
-  // An element showing fetched bytes holds the object URL it was given, so the
-  // previous one can be let go when it is replaced.
-  function release(img) {
-    var stale = img.getAttribute('data-blob');
-    if (!stale) return;
-    img.removeAttribute('data-blob');
-    URL.revokeObjectURL(stale);
-  }
-
   function chrome() {
     root.setAttribute('data-theme', theme);
     each('[data-theme-toggle]', function (b) { b.textContent = theme === 'dark' ? 'Light' : 'Dark' });
   }
 
-  // Point each element at its file and let the browser load it. This is the
-  // ordinary path: at load, and whenever the site is not being redrawn.
-  function point() {
-    each('img[data-base]', function (img) {
-      release(img);
-      var src = srcFor(img);
-      if (img.getAttribute('src') !== src) img.setAttribute('src', src);
-    });
-  }
-
-  // Neither a new element nor a fetch can refresh a drawing on its own.
+  // Every drawing is fetched and handed to its element as a blob, including
+  // the first one -- which is why no <img> carries a src of its own.
   //
   // A browser keeps a second cache for images, above HTTP and keyed by URL,
-  // which deliberately ignores expiry -- the HTML spec calls it the list of
-  // available images, and it exists for compatibility. An <img> pointed at a
-  // URL it already holds renders from there without a request, while a fetch
-  // of that URL fills the HTTP cache, a different store.
-  //
-  // So the bytes go to the element directly, as a blob. That sidesteps the
-  // URL-keyed entry while the address on the wire stays put.
-  function refresh() {
+  // which deliberately ignores expiry: the HTML spec calls it the list of
+  // available images and it exists for compatibility. An <img> pointed at a
+  // URL it already holds renders from there without a request, and a fetch of
+  // that URL fills the HTTP cache, a different store. Going through a blob
+  // sidesteps it, while the address on the wire stays put.
+  function show() {
     var pending = {};
     each('img[data-base]', function (img) {
       var url = srcFor(img);
@@ -183,27 +150,17 @@
     return (Math.floor(Date.now() / 1000 / interval) + 1) * interval * 1000;
   }
 
-  function countdown(left) {
-    var m = Math.floor(left / 60), sec = left % 60;
-    return 'next in ' + (m > 0 ? m + ':' + (sec < 10 ? '0' : '') + sec : sec + 's');
-  }
-
   function tick() {
     var left = Math.round((nextAt - Date.now()) / 1000);
     if (left <= 0) {
       nextAt = boundary();
-      refresh();
+      show();
       left = Math.round((nextAt - Date.now()) / 1000);
     }
     var el = document.querySelector('[data-tick]');
-    if (el) el.textContent = countdown(left);
-  }
-
-  // Switching palette or variant asks for a different file, which the image
-  // cache may also be holding an older copy of.
-  function show() {
-    chrome();
-    if (interval > 0) refresh(); else point();
+    if (!el) return;
+    var m = Math.floor(left / 60), sec = left % 60;
+    el.textContent = 'next in ' + (m > 0 ? m + ':' + (sec < 10 ? '0' : '') + sec : sec + 's');
   }
 
   // Each drawing remembers its own choice, so it survives following a link.
@@ -219,6 +176,7 @@
     if (e.target.closest('[data-theme-toggle]')) {
       theme = theme === 'dark' ? 'light' : 'dark';
       put(TK, theme);
+      chrome();
       show();
       return;
     }
@@ -235,7 +193,7 @@
   });
 
   chrome();
-  point();
+  show();
   if (interval > 0) {
     nextAt = boundary();
     tick();

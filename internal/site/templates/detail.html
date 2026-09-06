@@ -1,14 +1,12 @@
 {{template "head" .}}
-<p class="crumb"><a href="{{.Up}}index.html">&larr; {{.SiteTitle}}</a></p>
 {{range .Images}}
 <figure data-key="{{$.Key}}/{{.Range}}" data-variant="plain">
   <figcaption>
-    {{.Title}}
+    <b>{{.Title}}</b>
     <span class="spacer"></span>
     {{if $.Peak}}<button type="button" data-peak-toggle aria-pressed="false">peak</button>{{end}}
   </figcaption>
-  <img alt="{{.Title}}" data-base="{{$.Base}}" data-range="{{.Range}}"
-       src="{{$.Base}}/light/plain/{{.Range}}.png">
+  <img alt="{{.Title}}" data-base="{{$.Base}}" data-range="{{.Range}}">
 </figure>
 {{end}}
 {{template "foot" .}}

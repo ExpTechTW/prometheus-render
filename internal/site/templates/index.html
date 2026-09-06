@@ -1,20 +1,14 @@
 {{template "head" .}}
-{{if or .Regions .Graphs}}
-<nav class="axes">
-  {{if .Regions}}
-  <div>
-    <h2>By region</h2>
-    <ul>{{range .Regions}}<li><a href="{{$.Up}}{{.Href}}">{{.Title}}</a></li>{{end}}</ul>
-  </div>
-  {{end}}
-  {{if .Graphs}}
-  <div>
-    <h2>By graph</h2>
-    <ul>{{range .Graphs}}<li><a href="{{$.Up}}{{.Href}}">{{.Title}}</a></li>{{end}}</ul>
-  </div>
-  {{end}}
-</nav>
+{{if .Regions}}
+<ul class="links"><b>Regions</b>
+  {{range .Regions}}<li><a href="{{$.Up}}{{.Href}}">{{.Title}}</a></li>{{end}}
+</ul>
+{{end}}
+{{if .Graphs}}
+<ul class="links"><b>Graphs</b>
+  {{range .Graphs}}<li><a href="{{$.Up}}{{.Href}}">{{.Title}}</a></li>{{end}}
+</ul>
 {{end}}
 {{range .Cards}}{{template "card" .}}{{end}}
-{{if and (not .Regions) (not .Graphs) (not .Cards)}}<p class="empty">Nothing drawn yet.</p>{{end}}
+{{if and (not .Regions) (not .Graphs) (not .Cards)}}<p>Nothing drawn yet.</p>{{end}}
 {{template "foot" .}}

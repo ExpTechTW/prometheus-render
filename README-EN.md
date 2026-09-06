@@ -231,6 +231,10 @@ So the bytes are handed to the element directly: `fetch` → `blob` →
 the wire never changes**, so nginx and the CDN keep their entries and their hit
 rate.
 
+**Every drawing arrives that way, including the first** -- no `<img>` in the
+HTML carries a `src` -- so a page just opened cannot be showing a stale copy
+either.
+
 Each drawing carries the time it was made in its bottom right corner, in the
 same zone -- so a picture that has been saved or passed on still says how old
 it is.

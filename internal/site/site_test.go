@@ -467,7 +467,7 @@ func TestBothViewsExist(t *testing.T) {
 	}
 
 	index := read(t, s, "index.html")
-	for _, want := range []string{"By region", "By graph", "core-tnn1", "core-tyo1", "HTTP traffic"} {
+	for _, want := range []string{"Regions", "Graphs", "core-tnn1", "core-tyo1", "HTTP traffic"} {
 		if !strings.Contains(index, want) {
 			t.Errorf("index.html is missing %q", want)
 		}
