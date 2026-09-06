@@ -54,7 +54,11 @@
   .crumb { margin:0 0 1rem; color:var(--dim) }
   .empty { color:var(--dim); padding:2rem 0 }
 </style>
-<script>
+<!-- data-cfasync="false" keeps Cloudflare's Rocket Loader from taking these
+     over. It rewrites the type attribute to something the browser will not
+     run and executes the script itself, later and out of order, which leaves
+     the page without its timer, its toggles or its theme. -->
+<script data-cfasync="false">
   // Set before anything paints, so a dark page never flashes light first.
   try {
     var t = localStorage.getItem('pr.theme');
@@ -94,7 +98,7 @@
   Updated {{.Now}} by
   <a href="https://github.com/ExpTechTW/prometheus-render" rel="noopener">prometheus-render</a>.
 </footer>
-<script>
+<script data-cfasync="false">
 (function () {
   var TK = 'pr.theme', VK = 'pr.variant.';
   function get(k, d) { try { var v = localStorage.getItem(k); return v === null ? d : v } catch (e) { return d } }

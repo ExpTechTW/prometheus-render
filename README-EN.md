@@ -214,6 +214,11 @@ The header counts down to the next boundary and swaps the drawings there.
 **Image URLs are stable** (no version query), so every cache in front of them
 keeps hitting.
 
+The inline scripts carry `data-cfasync="false"` so Cloudflare's Rocket Loader
+leaves them alone: it rewrites the type attribute to something the browser will
+not run and executes the script itself, later and out of order, which leaves the
+page without its timer, its toggles or its theme.
+
 Rebuilding the `<img>` is not enough on its own: a browser decides what to
 reuse by URL, so a fresh element pointed at the same address is served from its
 cache without going near the network -- the HTML spec even folds repeated `src`

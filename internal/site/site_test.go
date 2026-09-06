@@ -826,3 +826,25 @@ func TestPagesCarryOnlyTheInterval(t *testing.T) {
 		}
 	}
 }
+
+// Cloudflare's Rocket Loader rewrites inline scripts to a type the browser
+// will not run and executes them itself, later and out of order. A page whose
+// timer and toggles live in those scripts simply stops working, so every one
+// of them opts out.
+func TestInlineScriptsOptOutOfRocketLoader(t *testing.T) {
+	s := build(t, newSource(t), 2, 0, "")
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	for _, name := range []string{"index.html", "traffic.html"} {
+		body := read(t, s, name)
+		tags := strings.Count(body, "<script")
+		opted := strings.Count(body, `<script data-cfasync="false"`)
+		if tags == 0 {
+			t.Fatalf("%s has no scripts", name)
+		}
+		if opted != tags {
+			t.Errorf("%s: %d of %d scripts opt out of Rocket Loader", name, opted, tags)
+		}
+	}
+}
