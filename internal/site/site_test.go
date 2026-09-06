@@ -818,8 +818,11 @@ func TestPagesCarryOnlyTheInterval(t *testing.T) {
 		if strings.Contains(body, ".png?") {
 			t.Errorf("%s carries a query on an image URL", name)
 		}
-		if strings.Contains(body, "fetch(") {
-			t.Errorf("%s asks the server something it can work out itself", name)
+		// The page may fetch the drawings themselves -- that is how the
+		// browser's own copy gets replaced -- but nothing else. When the next
+		// pass happens is arithmetic, not a question for the server.
+		if strings.Contains(body, ".json") {
+			t.Errorf("%s asks for a side file it could work out itself", name)
 		}
 	}
 }

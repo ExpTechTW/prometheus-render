@@ -210,11 +210,16 @@ boundaries from the same interval, so neither side has to ask the other --
 Each pass begins **five seconds early**, so the drawings are in place when the
 boundary arrives. A pass that outruns that lead says so in the log.
 
-The header counts down to the next boundary and rebuilds the `<img>` elements
-there -- an open page has no reason to ask again on its own, since an `<img>`
-is fetched once and then sits there. **Image URLs are stable** (no version
-query), so every cache in front of them keeps hitting, and by the boundary the
-copy the browser holds has expired anyway.
+The header counts down to the next boundary and swaps the drawings there.
+**Image URLs are stable** (no version query), so every cache in front of them
+keeps hitting.
+
+Rebuilding the `<img>` is not enough on its own: a browser decides what to
+reuse by URL, so a fresh element pointed at the same address is served from its
+cache without going near the network -- the HTML spec even folds repeated `src`
+assignments into a single load to avoid the request. So the browser's own copy
+is replaced first, with `fetch(url, {cache: "reload"})`, and the rebuilt
+element then finds the new bytes already there.
 
 Each drawing carries the time it was made in its bottom right corner, in the
 same zone -- so a picture that has been saved or passed on still says how old

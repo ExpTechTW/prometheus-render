@@ -133,15 +133,31 @@
     return (Math.floor(Date.now() / 1000 / interval) + 1) * interval * 1000;
   }
 
-  // An <img> is fetched once and then sits there, however short its freshness.
-  // Replacing the element is what sends the browser to look again -- at the
-  // same URL, so the caches still answer, and by the boundary the copy it holds
-  // has expired anyway.
+  // Rebuilding the element is not enough on its own. A browser decides what to
+  // reuse by URL, so a fresh <img> pointed at the same address is served from
+  // its cache without going near the network -- and the HTML spec even folds
+  // repeated src assignments into one load to avoid the request.
+  //
+  // So the browser's own copy is replaced first. cache:"reload" fetches past
+  // it and stores what comes back; the rebuilt element then finds the new
+  // bytes already there, with no second request. The URL never changes, so
+  // nginx and the CDN in front keep their entries and their hit rate.
   function rebuild() {
-    each('img[data-base]', function (img) {
-      var fresh = img.cloneNode(false);
-      fresh.setAttribute('src', srcFor(img));
-      img.parentNode.replaceChild(fresh, img);
+    var imgs = [];
+    each('img[data-base]', function (img) { imgs.push(img) });
+    var seen = {};
+    var loads = imgs.map(function (img) {
+      var url = srcFor(img);
+      if (seen[url]) return seen[url];
+      seen[url] = fetch(url, { cache: 'reload' }).catch(function () {});
+      return seen[url];
+    });
+    Promise.all(loads).then(function () {
+      imgs.forEach(function (img) {
+        var fresh = img.cloneNode(false);
+        fresh.setAttribute('src', srcFor(img));
+        if (img.parentNode) img.parentNode.replaceChild(fresh, img);
+      });
     });
   }
 
