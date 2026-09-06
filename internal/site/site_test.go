@@ -736,3 +736,27 @@ graphs:
 		}
 	}
 }
+
+// The stamp on a drawing is in the zone the graph is drawn in, and every
+// drawing in a pass carries the same one.
+func TestDrawingsAreStampedInTheConfiguredZone(t *testing.T) {
+	s := build(t, newSource(t), 4, 0, "")
+	s.Cfg.Defaults.TZ = "Asia/Taipei"
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	got := s.stampedAt()
+	want := time.Now().In(s.Cfg.Location()).Format("2006-01-02 15:")
+	if !strings.HasPrefix(got, "Updated ") || !strings.Contains(got, want) {
+		t.Errorf("stamp = %q, want it to carry %q in Asia/Taipei", got, want)
+	}
+	if !strings.Contains(got, "CST") {
+		t.Errorf("stamp = %q, want the configured zone rather than the machine's", got)
+	}
+
+	// The page footer and the drawings agree to the minute.
+	if minute := got[len("Updated ") : len("Updated ")+16]; !strings.Contains(read(t, s, "index.html"), minute) {
+		t.Errorf("the page and the drawings disagree about when: %q", minute)
+	}
+}

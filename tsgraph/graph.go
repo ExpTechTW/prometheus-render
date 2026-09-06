@@ -77,6 +77,12 @@ type Options struct {
 	HideStats  bool
 	StatUnit   string // suffix appended to the statistics, e.g. "" or "%s"
 
+	// Footer is a line set below the legend, in the manner of rrdtool's
+	// watermark: present, but not competing with the data. A graph that is
+	// redrawn on a timer uses it to say when, so the picture carries its own
+	// age even when saved or passed on.
+	Footer string
+
 	// BehindFrom draws the series from this index onwards first, so they sit
 	// behind the earlier ones while colours and the legend still follow the
 	// list order. Zero or out of range leaves the order alone.
@@ -92,6 +98,7 @@ type Options struct {
 // graph_size_location.
 type layout struct {
 	imgW, imgH            int
+	footerY               int
 	plotX0, plotY0        int
 	plotX1, plotY1        int
 	legendY               int
@@ -120,6 +127,10 @@ func computeLayout(o Options, face font.Face, rows int, z float64) layout {
 	l.legendY = l.plotY1 + l.labelH + lineH
 	l.imgW = l.plotX1 + sc(34)
 	l.imgH = l.legendY + rows*lineH + sc(6)
+	if o.Footer != "" {
+		l.footerY = l.imgH + lineH - sc(2)
+		l.imgH = l.footerY + sc(8)
+	}
 	return l
 }
 
@@ -336,6 +347,7 @@ func Render(all []Series, o Options) ([]byte, error) {
 
 	// Legend: a bordered swatch, the name, then the statistics.
 	if o.HideLegend {
+		drawFooter(c, face, o, l, sc)
 		return encode(c)
 	}
 	nameW := 0
@@ -358,7 +370,16 @@ func Render(all []Series, o Options) ([]byte, error) {
 		c.text(face, line, sc(30), ty, th.Font)
 	}
 
+	drawFooter(c, face, o, l, sc)
 	return encode(c)
+}
+
+// drawFooter sets the footer along the bottom right, clear of the bevel.
+func drawFooter(c canvas, face font.Face, o Options, l layout, sc func(int) int) {
+	if o.Footer == "" {
+		return
+	}
+	c.text(face, o.Footer, l.imgW-sc(30)-textWidth(face, o.Footer), l.footerY, o.Theme.Font)
 }
 
 func encode(c canvas) ([]byte, error) {

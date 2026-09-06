@@ -194,3 +194,66 @@ func TestThemesAreDistinctAndComplete(t *testing.T) {
 		t.Error("the fallback theme has no palette")
 	}
 }
+
+// A graph redrawn on a timer should carry its own age, so a picture that has
+// been saved or passed on still says when it was made.
+func TestFooterIsDrawnBelowTheLegend(t *testing.T) {
+	theme := tsgraph.LookupTheme("mrtg")
+	s := series("rx", 48, func(i int) float64 { return float64(i%12) + 1 })
+	s.Colour, s.Kind = theme.Colour(0), tsgraph.Area
+
+	opts := tsgraph.Options{Title: "eth0", Width: 400, Height: 150, Theme: theme}
+	plain := render(t, []tsgraph.Series{s}, opts)
+
+	opts.Footer = "Updated 2026-09-06 08:34:36 CST"
+	stamped := render(t, []tsgraph.Series{s}, opts)
+
+	grew := stamped.Bounds().Dy() - plain.Bounds().Dy()
+	if grew <= 0 {
+		t.Fatalf("the image did not grow for the footer (%d px)", grew)
+	}
+	if stamped.Bounds().Dx() != plain.Bounds().Dx() {
+		t.Errorf("the footer changed the width: %d, want %d",
+			stamped.Bounds().Dx(), plain.Bounds().Dx())
+	}
+
+	// Something was actually drawn in the band the footer gained, and it is on
+	// the right, where rrdtool puts its watermark.
+	b := stamped.Bounds()
+	band := func(x0, x1 int) int {
+		n := 0
+		for y := b.Max.Y - grew - 4; y < b.Max.Y-2; y++ {
+			for x := x0; x < x1; x++ {
+				r, g, bl, _ := stamped.At(x, y).RGBA()
+				fr, fg, fb, _ := color.RGBA{theme.Font.R, theme.Font.G, theme.Font.B, 0xFF}.RGBA()
+				if r == fr && g == fg && bl == fb {
+					n++
+				}
+			}
+		}
+		return n
+	}
+	right, left := band(b.Dx()/2, b.Max.X), band(b.Min.X, b.Dx()/2)
+	if right == 0 {
+		t.Error("the footer band is empty on the right")
+	}
+	if left > right {
+		t.Errorf("the footer is not right-aligned: %d px left, %d right", left, right)
+	}
+}
+
+// A graph with no legend still carries its stamp.
+func TestFooterSurvivesHiddenLegend(t *testing.T) {
+	theme := tsgraph.LookupTheme("mrtg")
+	s := series("rx", 24, func(i int) float64 { return float64(i) })
+	s.Colour = theme.Colour(0)
+
+	opts := tsgraph.Options{Width: 300, Height: 120, Theme: theme, HideLegend: true}
+	bare := render(t, []tsgraph.Series{s}, opts)
+	opts.Footer = "Updated 2026-09-06 08:34:36 CST"
+	stamped := render(t, []tsgraph.Series{s}, opts)
+
+	if stamped.Bounds().Dy() <= bare.Bounds().Dy() {
+		t.Error("a graph without a legend gained no room for its footer")
+	}
+}

@@ -43,6 +43,7 @@ type Site struct {
 	// pairs that produced images, so the pages list only what exists.
 	mu      sync.Mutex
 	regions []config.Region
+	stamp   string
 	drawn   map[string]bool
 	noData  map[string]bool
 	failed  map[string]bool
@@ -118,6 +119,12 @@ func (s *Site) Render(ctx context.Context) error {
 		s.regions = found
 		s.mu.Unlock()
 	}
+
+	// One stamp for the whole pass, in the zone the graphs are drawn in, so
+	// every image it produces agrees about when it was made.
+	s.mu.Lock()
+	s.stamp = "Updated " + time.Now().In(s.Cfg.Location()).Format("2006-01-02 15:04:05 MST")
+	s.mu.Unlock()
 
 	jobs := s.jobs()
 	if len(jobs) == 0 {
@@ -288,6 +295,11 @@ func (s *Site) draw(ctx context.Context, j job) error {
 			if err != nil {
 				return fmt.Errorf("%s: %w", j, err)
 			}
+			// When the drawing was made is a property of the pass, not of the
+			// configuration, so it is set here rather than carried through the
+			// settings. It rides on the image so a saved or forwarded graph
+			// still says how old it is.
+			g.Options.Footer = s.stampedAt()
 			img, err := render.Draw(g, flat)
 			if err != nil {
 				return fmt.Errorf("%s: %w", j, err)
@@ -302,6 +314,13 @@ func (s *Site) draw(ctx context.Context, j job) error {
 
 	s.mark(&s.drawn, j.region.Name, j.graph.Name)
 	return nil
+}
+
+// stampedAt is the line every drawing in this pass carries.
+func (s *Site) stampedAt() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stamp
 }
 
 func (s *Site) mark(set *map[string]bool, region, graph string) {

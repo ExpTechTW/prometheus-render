@@ -202,6 +202,10 @@ query. Because it becomes a path segment, a name is letters, digits, dot, dash
 or underscore; anything else is refused at load rather than quietly becoming
 something else in the URL.
 
+Each drawing carries the time it was made in its bottom right corner, in the
+same zone -- so a picture that has been saved or passed on still says how old
+it is.
+
 **The values are discovered from the data**, so a node arriving or leaving
 changes the pages without editing the file. A graph with nothing to show in a
 region is left off the pages; one whose query failed is kept, because that
