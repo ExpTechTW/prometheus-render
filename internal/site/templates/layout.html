@@ -113,33 +113,38 @@
   try { dark = matchMedia('(prefers-color-scheme: dark)').matches } catch (e) {}
   var theme = get(TK, dark ? 'dark' : 'light');
 
-  // Image URLs are stable, so every cache in front of them keeps working.
+  // Which drawing an element wants: the palette and the variant pick among
+  // files the site already holds. The address never carries a version, so the
+  // caches in front of it keep their entries.
   function srcFor(img) {
     var box = img.closest('[data-variant]');
-    var v = box ? box.getAttribute('data-variant') : 'plain';
-    return img.getAttribute('data-base') + '/' + theme + '/' + v + '/' +
+    return img.getAttribute('data-base') + '/' + theme + '/' +
+           (box ? box.getAttribute('data-variant') : 'plain') + '/' +
            img.getAttribute('data-range') + '.png';
   }
 
-  function paint() {
+  // An element showing fetched bytes holds the object URL it was given, so the
+  // previous one can be let go when it is replaced.
+  function release(img) {
+    var stale = img.getAttribute('data-blob');
+    if (!stale) return;
+    img.removeAttribute('data-blob');
+    URL.revokeObjectURL(stale);
+  }
+
+  function chrome() {
     root.setAttribute('data-theme', theme);
     each('[data-theme-toggle]', function (b) { b.textContent = theme === 'dark' ? 'Light' : 'Dark' });
+  }
+
+  // Point each element at its file and let the browser load it. This is the
+  // ordinary path: at load, and whenever the site is not being redrawn.
+  function point() {
     each('img[data-base]', function (img) {
-      var stale = img.getAttribute('data-blob');
-      if (stale) {
-        img.removeAttribute('data-blob');
-        URL.revokeObjectURL(stale);
-      }
+      release(img);
       var src = srcFor(img);
       if (img.getAttribute('src') !== src) img.setAttribute('src', src);
     });
-  }
-
-  // The next wall-clock boundary of the interval. The server draws just before
-  // the same boundaries, from the same number, so neither side ever has to ask
-  // the other which pass it is on.
-  function boundary() {
-    return (Math.floor(Date.now() / 1000 / interval) + 1) * interval * 1000;
   }
 
   // Neither a new element nor a fetch can refresh a drawing on its own.
@@ -147,22 +152,17 @@
   // A browser keeps a second cache for images, above HTTP and keyed by URL,
   // which deliberately ignores expiry -- the HTML spec calls it the list of
   // available images, and it exists for compatibility. An <img> pointed at a
-  // URL it already holds renders from there without a request, and a fetch of
-  // that URL fills the HTTP cache, which is a different store entirely.
+  // URL it already holds renders from there without a request, while a fetch
+  // of that URL fills the HTTP cache, a different store.
   //
-  // So the bytes are fetched and handed to the element directly, as a blob.
-  // That sidesteps the URL-keyed entry while leaving the address on the wire
-  // unchanged, so nginx and the CDN keep their entries and their hit rate.
-  function rebuild() {
+  // So the bytes go to the element directly, as a blob. That sidesteps the
+  // URL-keyed entry while the address on the wire stays put.
+  function refresh() {
     var pending = {};
     each('img[data-base]', function (img) {
       var url = srcFor(img);
-      var got = pending[url];
-      if (!got) {
-        got = pending[url] = fetch(url, { cache: 'reload' }).then(function (r) {
-          return r.ok ? r.blob() : null;
-        });
-      }
+      var got = pending[url] || (pending[url] = fetch(url, { cache: 'reload' })
+        .then(function (r) { return r.ok ? r.blob() : null }));
       got.then(function (blob) {
         if (!blob) return;
         var stale = img.getAttribute('data-blob');
@@ -176,17 +176,34 @@
     });
   }
 
+  // Redraws land on wall-clock boundaries of the interval, and the server
+  // starts each pass a little before one. Both sides work the same boundaries
+  // out from the same number and never ask each other.
+  function boundary() {
+    return (Math.floor(Date.now() / 1000 / interval) + 1) * interval * 1000;
+  }
+
+  function countdown(left) {
+    var m = Math.floor(left / 60), sec = left % 60;
+    return 'next in ' + (m > 0 ? m + ':' + (sec < 10 ? '0' : '') + sec : sec + 's');
+  }
+
   function tick() {
     var left = Math.round((nextAt - Date.now()) / 1000);
     if (left <= 0) {
       nextAt = boundary();
-      rebuild();
+      refresh();
       left = Math.round((nextAt - Date.now()) / 1000);
     }
     var el = document.querySelector('[data-tick]');
-    if (!el) return;
-    var m = Math.floor(left / 60), sec = left % 60;
-    el.textContent = 'next in ' + (m > 0 ? m + ':' + (sec < 10 ? '0' : '') + sec : sec + 's');
+    if (el) el.textContent = countdown(left);
+  }
+
+  // Switching palette or variant asks for a different file, which the image
+  // cache may also be holding an older copy of.
+  function show() {
+    chrome();
+    if (interval > 0) refresh(); else point();
   }
 
   // Each drawing remembers its own choice, so it survives following a link.
@@ -202,8 +219,7 @@
     if (e.target.closest('[data-theme-toggle]')) {
       theme = theme === 'dark' ? 'light' : 'dark';
       put(TK, theme);
-      paint();
-      if (interval > 0) rebuild();
+      show();
       return;
     }
     var btn = e.target.closest('[data-peak-toggle]');
@@ -215,11 +231,11 @@
     box.setAttribute('data-variant', v);
     put(VK + box.getAttribute('data-key'), v);
     btn.setAttribute('aria-pressed', String(v === 'peak'));
-    paint();
-    if (interval > 0) rebuild();
+    show();
   });
 
-  paint();
+  chrome();
+  point();
   if (interval > 0) {
     nextAt = boundary();
     tick();
