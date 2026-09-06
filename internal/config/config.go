@@ -53,6 +53,19 @@ type Regions struct {
 // Split reports whether the site is divided by region at all.
 func (c *Config) Split() bool { return c.Regions.Label != "" }
 
+// Location is the timezone the site reads in: the one its graphs are drawn in,
+// so the time under a page agrees with the time along its axes.
+func (c *Config) Location() *time.Location {
+	if c.Defaults.TZ == "" {
+		return time.Local
+	}
+	loc, err := time.LoadLocation(c.Defaults.TZ)
+	if err != nil {
+		return time.Local
+	}
+	return loc
+}
+
 // Source is the Prometheus-compatible endpoint the samples are read from.
 type Source struct {
 	URL      string            `yaml:"url"`
@@ -255,6 +268,12 @@ func Parse(b []byte) (*Config, error) {
 	}
 	if len(c.Defaults.Ranges) == 0 {
 		c.Defaults.Ranges = DefaultRanges
+	}
+
+	if c.Defaults.TZ != "" {
+		if _, err := time.LoadLocation(c.Defaults.TZ); err != nil {
+			return nil, fmt.Errorf("config: defaults.tz: %w", err)
+		}
 	}
 
 	if c.Regions.Label != "" && !nameRE.MatchString(c.Regions.Label) {

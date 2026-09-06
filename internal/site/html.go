@@ -74,7 +74,7 @@ type detailPage struct {
 // It runs after the images and separately from them, so the pages still
 // describe the config when a query failed and an image is stale.
 func (s *Site) writePages() error {
-	now := time.Now().Format("2006-01-02 15:04:05 MST")
+	now := time.Now().In(s.Cfg.Location()).Format("2006-01-02 15:04:05 MST")
 	title := s.Cfg.Output.Title
 
 	chrome := func(name, pageTitle string) page {
