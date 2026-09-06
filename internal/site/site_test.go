@@ -761,73 +761,65 @@ func TestDrawingsAreStampedInTheConfiguredZone(t *testing.T) {
 	}
 }
 
-// A page that came from a cache still has to end up showing the current
-// drawings, and a page left open has to notice the next pass. Both hang on the
-// version: it rides on every image URL, and the pages poll for it.
-func TestPagesCarryAndPublishTheVersion(t *testing.T) {
-	s := build(t, newSource(t), 4, 0, "")
-	s.Cfg.Output.Interval = config.Duration(5 * time.Minute)
-	if err := s.Render(context.Background()); err != nil {
-		t.Fatalf("Render: %v", err)
+// Passes are pinned to the clock, not to whenever the process started, and
+// they begin a little early so the drawings are in place when the boundary
+// arrives. A page works the same boundaries out from the same interval, which
+// is what lets the two stay in step without talking.
+func TestPassesArePinnedToTheClock(t *testing.T) {
+	const lead = 5 * time.Second
+	at := func(s string) time.Time {
+		t.Helper()
+		ts, err := time.Parse("15:04:05", s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ts
 	}
 
-	var v struct {
-		Version  int64  `json:"version"`
-		Interval int    `json:"interval"`
-		Updated  string `json:"updated"`
-	}
-	if err := json.Unmarshal([]byte(read(t, s, "version.json")), &v); err != nil {
-		t.Fatalf("version.json: %v", err)
-	}
-	if v.Version == 0 {
-		t.Error("version.json carries no version")
-	}
-	if v.Interval != 300 {
-		t.Errorf("interval = %d, want the configured 300", v.Interval)
-	}
-
-	// Every page hands the version to its script, and every image URL carries
-	// it, so a browser refetches exactly when there is something new.
-	want := strconv.FormatInt(v.Version, 10)
-	for _, name := range []string{"index.html", "traffic.html"} {
-		body := read(t, s, name)
-		if !strings.Contains(body, `data-version="`+want+`"`) {
-			t.Errorf("%s does not carry the version", name)
+	for _, tc := range []struct{ every, now, want string }{
+		{"5m", "10:00:00", "10:04:55"},
+		{"5m", "10:04:54", "10:04:55"},
+		{"5m", "10:04:55", "10:09:55"}, // on the mark, the next one is next
+		{"5m", "10:07:30", "10:09:55"},
+		{"1m", "10:07:30", "10:07:55"},
+		{"15s", "10:07:30", "10:07:40"},
+	} {
+		every, err := time.ParseDuration(tc.every)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !strings.Contains(body, `data-interval="300"`) {
-			t.Errorf("%s does not carry the interval to count down", name)
+		got := nextRender(at(tc.now), every, lead)
+		if want := at(tc.want); !got.Equal(want) {
+			t.Errorf("every %s at %s: next = %s, want %s",
+				tc.every, tc.now, got.Format("15:04:05"), tc.want)
 		}
-		// The version identifies the pass; it must not name the file, or every
-		// cache in front of the site would miss on each redraw.
-		if strings.Contains(body, ".png?") {
-			t.Errorf("%s carries a query on an image URL, which defeats the caches", name)
-		}
-	}
-
-	// A nested page has to be able to reach the version file.
-	if !strings.Contains(read(t, s, "traffic.html"), `data-up=""`) {
-		t.Error("the page does not say where the site root is")
 	}
 }
 
-// A second pass moves the version on, which is what makes an open page swap
-// its images.
-func TestASecondPassMovesTheVersionOn(t *testing.T) {
+// The page needs one number to work out when to look again, and no side file
+// to ask.
+func TestPagesCarryOnlyTheInterval(t *testing.T) {
 	s := build(t, newSource(t), 4, 0, "")
 	s.Cfg.Output.Interval = config.Duration(5 * time.Minute)
 	if err := s.Render(context.Background()); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	first := s.version()
 
-	time.Sleep(1100 * time.Millisecond)
-	if err := s.Render(context.Background()); err != nil {
-		t.Fatalf("Render: %v", err)
+	if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, "version.json")); err == nil {
+		t.Error("version.json is still being published")
 	}
-	if second := s.version(); second <= first {
-		t.Errorf("version did not advance: %d then %d", first, second)
-	}
-	if !strings.Contains(read(t, s, "index.html"), `data-version="`+strconv.FormatInt(s.version(), 10)+`"`) {
-		t.Error("the page still reports the previous pass")
+	for _, name := range []string{"index.html", "traffic.html"} {
+		body := read(t, s, name)
+		if !strings.Contains(body, `data-interval="300"`) {
+			t.Errorf("%s does not carry the interval", name)
+		}
+		// A query on an image URL would give every cache in front of the site
+		// a fresh key on each redraw.
+		if strings.Contains(body, ".png?") {
+			t.Errorf("%s carries a query on an image URL", name)
+		}
+		if strings.Contains(body, "fetch(") {
+			t.Errorf("%s asks the server something it can work out itself", name)
+		}
 	}
 }

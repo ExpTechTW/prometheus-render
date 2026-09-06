@@ -1,5 +1,5 @@
 {{define "head"}}<!doctype html>
-<html lang="en" data-up="{{.Up}}" data-version="{{.Version}}" data-interval="{{.Interval}}">
+<html lang="en" data-up="{{.Up}}" data-interval="{{.Interval}}">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}}</title>
@@ -102,19 +102,14 @@
   function each(sel, fn) { Array.prototype.forEach.call(document.querySelectorAll(sel), fn) }
 
   var root = document.documentElement;
-  var up = root.getAttribute('data-up') || '';
-  var version = root.getAttribute('data-version') || '';
   var interval = parseInt(root.getAttribute('data-interval') || '0', 10);
-  var nextAt = interval > 0 ? (parseInt(version, 10) + interval) * 1000 : 0;
+  var nextAt = 0;
 
   var dark = false;
   try { dark = matchMedia('(prefers-color-scheme: dark)').matches } catch (e) {}
   var theme = get(TK, dark ? 'dark' : 'light');
 
-  // Image URLs are stable, so every cache in front of them keeps working. What
-  // an open page lacks is any reason to ask again: an <img> is fetched once and
-  // then sits there, however short its freshness. The poll below supplies that
-  // reason, and only when there is actually a new drawing.
+  // Image URLs are stable, so every cache in front of them keeps working.
   function srcFor(img) {
     var box = img.closest('[data-variant]');
     var v = box ? box.getAttribute('data-variant') : 'plain';
@@ -131,22 +126,36 @@
     });
   }
 
-  // Warm the browser's own cache first, then re-point at the same URLs. The
-  // fetches are ordinary and conditional, so an unchanged picture costs a 304
-  // and the edge answers most of them; re-pointing then shows what arrived
-  // without a second request.
-  function refresh() {
-    var imgs = [];
-    each('img[data-base]', function (img) { imgs.push(img) });
-    Promise.all(imgs.map(function (img) {
-      return fetch(srcFor(img)).catch(function () {});
-    })).then(function () {
-      imgs.forEach(function (img) {
-        var src = srcFor(img);
-        img.removeAttribute('src');
-        img.setAttribute('src', src);
-      });
+  // The next wall-clock boundary of the interval. The server draws just before
+  // the same boundaries, from the same number, so neither side ever has to ask
+  // the other which pass it is on.
+  function boundary() {
+    return (Math.floor(Date.now() / 1000 / interval) + 1) * interval * 1000;
+  }
+
+  // An <img> is fetched once and then sits there, however short its freshness.
+  // Replacing the element is what sends the browser to look again -- at the
+  // same URL, so the caches still answer, and by the boundary the copy it holds
+  // has expired anyway.
+  function rebuild() {
+    each('img[data-base]', function (img) {
+      var fresh = img.cloneNode(false);
+      fresh.setAttribute('src', srcFor(img));
+      img.parentNode.replaceChild(fresh, img);
     });
+  }
+
+  function tick() {
+    var left = Math.round((nextAt - Date.now()) / 1000);
+    if (left <= 0) {
+      nextAt = boundary();
+      rebuild();
+      left = Math.round((nextAt - Date.now()) / 1000);
+    }
+    var el = document.querySelector('[data-tick]');
+    if (!el) return;
+    var m = Math.floor(left / 60), sec = left % 60;
+    el.textContent = 'next in ' + (m > 0 ? m + ':' + (sec < 10 ? '0' : '') + sec : sec + 's');
   }
 
   // Each drawing remembers its own choice, so it survives following a link.
@@ -178,10 +187,11 @@
   });
 
   paint();
-  tick();
-  poll();
-  setInterval(tick, 1000);
-  if (interval > 0) setInterval(poll, 15000);
+  if (interval > 0) {
+    nextAt = boundary();
+    tick();
+    setInterval(tick, 500);
+  }
 })();
 </script>
 </html>

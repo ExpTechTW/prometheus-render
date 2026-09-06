@@ -44,7 +44,6 @@ type Site struct {
 	mu      sync.Mutex
 	regions []config.Region
 	stamp   string
-	epoch   int64
 	drawn   map[string]bool
 	noData  map[string]bool
 	failed  map[string]bool
@@ -74,23 +73,53 @@ func (s *Site) Run(ctx context.Context) error {
 		return err
 	}
 
-	s.logf("redrawing every %s", every)
-	t := time.NewTicker(every)
-	defer t.Stop()
+	lead := leadFor(every)
+	s.logf("redrawing every %s, starting %s before each boundary", every, lead)
+
 	for {
+		at := nextRender(time.Now(), every, lead)
+		t := time.NewTimer(time.Until(at))
 		select {
 		case <-ctx.Done():
+			t.Stop()
 			return nil
 		case <-t.C:
-			// A Ticker holds at most one pending tick, so a pass that overruns
-			// its interval loses the ticks it ran through instead of queueing
-			// them up behind itself.
+			// Each pass is scheduled from the clock rather than from the last
+			// one, so a pass that overruns loses the boundaries it ran through
+			// instead of pushing every later one along with it.
 			//
 			// A failed pass is not fatal once on a timer: the source may be
-			// briefly unreachable, and the next tick tries again.
+			// briefly unreachable, and the next boundary tries again.
 			_ = s.pass(ctx)
 		}
 	}
+}
+
+// renderLead is how far before a boundary a pass begins, so the drawings are
+// in place by the time the boundary arrives.
+const renderLead = 5 * time.Second
+
+// leadFor is how early a pass starts for a given interval, never more than
+// half of it.
+func leadFor(every time.Duration) time.Duration {
+	if renderLead > every/2 {
+		return every / 2
+	}
+	return renderLead
+}
+
+// nextRender is when the next pass should start.
+//
+// Passes are pinned to wall-clock boundaries of the interval -- :00, :05, :10
+// for five minutes -- rather than to whenever the process happened to start.
+// A page computes the same boundaries from the same interval, so the two stay
+// in step without ever asking each other.
+func nextRender(now time.Time, every, lead time.Duration) time.Time {
+	at := now.Truncate(every).Add(every - lead)
+	if !at.After(now) {
+		at = at.Add(every)
+	}
+	return at
 }
 
 // pass draws everything once and reports how it went.
@@ -105,6 +134,12 @@ func (s *Site) pass(ctx context.Context) error {
 		s.logf("drew with errors in %s: %v", took, err)
 	default:
 		s.logf("drew %d images from %d queries in %s", s.imageCount(), len(s.jobs()), took)
+	}
+	// The lead exists so the drawings are in place by the boundary. A pass that
+	// outruns it publishes late, and pages arriving on time see the one before.
+	if every := s.Cfg.Output.Interval.Duration(); every > 0 && took > leadFor(every) {
+		s.logf("warning: the pass took %s, longer than the %s it starts early; "+
+			"pages will briefly see the previous one", took, leadFor(every))
 	}
 	return err
 }
@@ -123,10 +158,8 @@ func (s *Site) Render(ctx context.Context) error {
 
 	// One stamp for the whole pass, in the zone the graphs are drawn in, so
 	// every image it produces agrees about when it was made.
-	drawnAt := time.Now()
 	s.mu.Lock()
-	s.stamp = "Updated " + drawnAt.In(s.Cfg.Location()).Format("2006-01-02 15:04:05 MST")
-	s.epoch = drawnAt.Unix()
+	s.stamp = "Updated " + time.Now().In(s.Cfg.Location()).Format("2006-01-02 15:04:05 MST")
 	s.mu.Unlock()
 
 	jobs := s.jobs()
@@ -324,15 +357,6 @@ func (s *Site) stampedAt() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.stamp
-}
-
-// version identifies this pass. It rides on every image URL, so a page asks
-// for a new file only when there is one -- which keeps the pages current
-// without spending a cache on images that have not changed.
-func (s *Site) version() int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.epoch
 }
 
 func (s *Site) mark(set *map[string]bool, region, graph string) {

@@ -202,16 +202,19 @@ query. Because it becomes a path segment, a name is letters, digits, dot, dash
 or underscore; anything else is refused at load rather than quietly becoming
 something else in the URL.
 
-Pages poll a few-byte `version.json` every 15 seconds and refetch the drawings
-only when it moves. **Image URLs are stable**, so every cache in front of them
-keeps hitting; the version says whether there is something new, it does not
-name the file.
+Redraws are pinned to the clock: a five-minute interval draws at :00, :05,
+:10, rather than from whenever the process started. A page works out the same
+boundaries from the same interval, so neither side has to ask the other --
+**no version file, no polling**. The page is given one number: the interval.
 
-An open page has no reason to ask again on its own -- an `<img>` is fetched
-once and then sits there, however short its freshness. The poll supplies that
-reason, and only when it is warranted. It also runs at load, so a page served
-from a cache still ends up showing the current drawings. A countdown in the
-header says how long until the next pass.
+Each pass begins **five seconds early**, so the drawings are in place when the
+boundary arrives. A pass that outruns that lead says so in the log.
+
+The header counts down to the next boundary and rebuilds the `<img>` elements
+there -- an open page has no reason to ask again on its own, since an `<img>`
+is fetched once and then sits there. **Image URLs are stable** (no version
+query), so every cache in front of them keeps hitting, and by the boundary the
+copy the browser holds has expired anyway.
 
 Each drawing carries the time it was made in its bottom right corner, in the
 same zone -- so a picture that has been saved or passed on still says how old
