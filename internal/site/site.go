@@ -47,6 +47,10 @@ type Site struct {
 	drawn   map[string]bool
 	noData  map[string]bool
 	failed  map[string]bool
+
+	// What the last pass actually did, for the line it logs.
+	queries int
+	images  int
 }
 
 // job is one fetch: one graph, in one region, at one timescale.
@@ -133,7 +137,10 @@ func (s *Site) pass(ctx context.Context) error {
 	case err != nil:
 		s.logf("drew with errors in %s: %v", took, err)
 	default:
-		s.logf("drew %d images from %d queries in %s", s.imageCount(), len(s.jobs()), took)
+		s.mu.Lock()
+		images, queries := s.images, s.queries
+		s.mu.Unlock()
+		s.logf("drew %d images from %d queries in %s", images, queries, took)
 	}
 	// The lead exists so the drawings are in place by the boundary. A pass that
 	// outruns it publishes late, and pages arriving on time see the one before.
@@ -181,6 +188,7 @@ func (s *Site) Render(ctx context.Context) error {
 	s.drawn = map[string]bool{}
 	s.noData = map[string]bool{}
 	s.failed = map[string]bool{}
+	s.queries, s.images = 0, 0
 	s.mu.Unlock()
 
 	// Errors are collected by index rather than through a channel, so a
@@ -279,15 +287,6 @@ func (s *Site) scope(g *config.Graph) []config.Region {
 	return out
 }
 
-// imageCount is how many files a full pass writes.
-func (s *Site) imageCount() int {
-	n := 0
-	for _, j := range s.jobs() {
-		n += len(j.graph.Themes()) * len(j.graph.Variants())
-	}
-	return n
-}
-
 // draw runs one job's query and writes every image it feeds.
 func (s *Site) draw(ctx context.Context, j job) error {
 	// The peaks are separate targets that follow the averages, so one fetch of
@@ -309,13 +308,14 @@ func (s *Site) draw(ctx context.Context, j job) error {
 		// lives in one place, a node only just added. Say so and carry on
 		// rather than failing the pass, and leave it off the pages.
 		s.logf("no data: %s", j)
-		s.mark(&s.noData, j.region.Name, j.graph.Name)
+		s.mark(s.noData, j.region.Name, j.graph.Name)
 		return nil
 	case err != nil:
-		s.mark(&s.failed, j.region.Name, j.graph.Name)
+		s.mark(s.failed, j.region.Name, j.graph.Name)
 		return fmt.Errorf("%s: %w", j, err)
 	}
 
+	written := 0
 	plainGroups := min(len(j.graph.Series), len(grouped))
 	for _, v := range j.graph.Variants() {
 		data := grouped
@@ -345,10 +345,12 @@ func (s *Site) draw(ctx context.Context, j job) error {
 			if err := writeAtomic(p, img); err != nil {
 				return err
 			}
+			written++
 		}
 	}
 
-	s.mark(&s.drawn, j.region.Name, j.graph.Name)
+	s.mark(s.drawn, j.region.Name, j.graph.Name)
+	s.counted(written)
 	return nil
 }
 
@@ -359,10 +361,20 @@ func (s *Site) stampedAt() string {
 	return s.stamp
 }
 
-func (s *Site) mark(set *map[string]bool, region, graph string) {
+// mark records how a pair fared this pass. The maps are made before any
+// worker starts, so they are safe to hand over by value.
+func (s *Site) mark(set map[string]bool, region, graph string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	(*set)[region+"\x00"+graph] = true
+	set[region+"\x00"+graph] = true
+}
+
+// counted records the work a job did, for the line the pass logs.
+func (s *Site) counted(images int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.queries++
+	s.images += images
 }
 
 // has reports whether a pair has anything to show.
