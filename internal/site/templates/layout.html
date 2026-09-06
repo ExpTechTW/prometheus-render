@@ -125,6 +125,11 @@
     root.setAttribute('data-theme', theme);
     each('[data-theme-toggle]', function (b) { b.textContent = theme === 'dark' ? 'Light' : 'Dark' });
     each('img[data-base]', function (img) {
+      var stale = img.getAttribute('data-blob');
+      if (stale) {
+        img.removeAttribute('data-blob');
+        URL.revokeObjectURL(stale);
+      }
       var src = srcFor(img);
       if (img.getAttribute('src') !== src) img.setAttribute('src', src);
     });
@@ -137,31 +142,37 @@
     return (Math.floor(Date.now() / 1000 / interval) + 1) * interval * 1000;
   }
 
-  // Rebuilding the element is not enough on its own. A browser decides what to
-  // reuse by URL, so a fresh <img> pointed at the same address is served from
-  // its cache without going near the network -- and the HTML spec even folds
-  // repeated src assignments into one load to avoid the request.
+  // Neither a new element nor a fetch can refresh a drawing on its own.
   //
-  // So the browser's own copy is replaced first. cache:"reload" fetches past
-  // it and stores what comes back; the rebuilt element then finds the new
-  // bytes already there, with no second request. The URL never changes, so
-  // nginx and the CDN in front keep their entries and their hit rate.
+  // A browser keeps a second cache for images, above HTTP and keyed by URL,
+  // which deliberately ignores expiry -- the HTML spec calls it the list of
+  // available images, and it exists for compatibility. An <img> pointed at a
+  // URL it already holds renders from there without a request, and a fetch of
+  // that URL fills the HTTP cache, which is a different store entirely.
+  //
+  // So the bytes are fetched and handed to the element directly, as a blob.
+  // That sidesteps the URL-keyed entry while leaving the address on the wire
+  // unchanged, so nginx and the CDN keep their entries and their hit rate.
   function rebuild() {
-    var imgs = [];
-    each('img[data-base]', function (img) { imgs.push(img) });
-    var seen = {};
-    var loads = imgs.map(function (img) {
+    var pending = {};
+    each('img[data-base]', function (img) {
       var url = srcFor(img);
-      if (seen[url]) return seen[url];
-      seen[url] = fetch(url, { cache: 'reload' }).catch(function () {});
-      return seen[url];
-    });
-    Promise.all(loads).then(function () {
-      imgs.forEach(function (img) {
-        var fresh = img.cloneNode(false);
-        fresh.setAttribute('src', srcFor(img));
-        if (img.parentNode) img.parentNode.replaceChild(fresh, img);
-      });
+      var got = pending[url];
+      if (!got) {
+        got = pending[url] = fetch(url, { cache: 'reload' }).then(function (r) {
+          return r.ok ? r.blob() : null;
+        });
+      }
+      got.then(function (blob) {
+        if (!blob) return;
+        var stale = img.getAttribute('data-blob');
+        // One object URL per element: revoking a shared one would blank the
+        // others still using it.
+        var fresh = URL.createObjectURL(blob);
+        img.setAttribute('data-blob', fresh);
+        img.src = fresh;
+        if (stale) URL.revokeObjectURL(stale);
+      }).catch(function () {});
     });
   }
 
@@ -192,6 +203,7 @@
       theme = theme === 'dark' ? 'light' : 'dark';
       put(TK, theme);
       paint();
+      if (interval > 0) rebuild();
       return;
     }
     var btn = e.target.closest('[data-peak-toggle]');
@@ -204,6 +216,7 @@
     put(VK + box.getAttribute('data-key'), v);
     btn.setAttribute('aria-pressed', String(v === 'peak'));
     paint();
+    if (interval > 0) rebuild();
   });
 
   paint();

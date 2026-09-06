@@ -848,3 +848,30 @@ func TestInlineScriptsOptOutOfRocketLoader(t *testing.T) {
 		}
 	}
 }
+
+// A browser keeps a second cache for images, keyed by URL and above HTTP
+// semantics, so neither a new element nor a fetch of that URL can refresh what
+// is on screen. The bytes have to reach the element directly.
+func TestDrawingsAreHandedToTheElementDirectly(t *testing.T) {
+	s := build(t, newSource(t), 2, 0, "")
+	s.Cfg.Output.Interval = config.Duration(15 * time.Second)
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	body := read(t, s, "traffic.html")
+
+	for _, want := range []string{
+		"createObjectURL", // the bytes go to the element, not through its URL
+		"revokeObjectURL", // and the one before is let go
+		"cache: 'reload'", // fetched past the browser's own copy
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page is missing %s", want)
+		}
+	}
+	// The address on the wire must stay put, or every cache in front of the
+	// site takes a fresh key on each redraw.
+	if strings.Contains(body, ".png?") {
+		t.Error("an image URL carries a query")
+	}
+}

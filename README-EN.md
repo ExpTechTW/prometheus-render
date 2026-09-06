@@ -219,12 +219,17 @@ leaves them alone: it rewrites the type attribute to something the browser will
 not run and executes the script itself, later and out of order, which leaves the
 page without its timer, its toggles or its theme.
 
-Rebuilding the `<img>` is not enough on its own: a browser decides what to
-reuse by URL, so a fresh element pointed at the same address is served from its
-cache without going near the network -- the HTML spec even folds repeated `src`
-assignments into a single load to avoid the request. So the browser's own copy
-is replaced first, with `fetch(url, {cache: "reload"})`, and the rebuilt
-element then finds the new bytes already there.
+Neither a new element nor a fetch can do this on its own. A browser keeps a
+second cache for images, above HTTP and keyed by URL, which deliberately
+ignores expiry -- the HTML spec calls it the list of available images, and it
+exists for compatibility. An `<img>` pointed at a URL it already holds renders
+from there without a request, while a fetch of that URL fills the HTTP cache,
+which is a different store.
+
+So the bytes are handed to the element directly: `fetch` → `blob` →
+`createObjectURL`. That sidesteps the URL-keyed entry while **the address on
+the wire never changes**, so nginx and the CDN keep their entries and their hit
+rate.
 
 Each drawing carries the time it was made in its bottom right corner, in the
 same zone -- so a picture that has been saved or passed on still says how old
