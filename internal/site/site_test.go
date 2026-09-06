@@ -677,3 +677,46 @@ func TestPeakSwitchesPerDrawing(t *testing.T) {
 		t.Error("a graph without peaks should offer no peak button")
 	}
 }
+
+// A page redrawn on a timer must not be served from a cache that has stopped
+// checking: a stale status page looks current, which is worse than an empty
+// one.
+func TestServedFilesAskToBeRevalidated(t *testing.T) {
+	s := build(t, newSource(t), 2, 0, "")
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	for _, path := range []string{"/", "/index.html", "/traffic/light/plain/1d.png"} {
+		resp, err := srv.Client().Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		resp.Body.Close()
+		if got := resp.Header.Get("Cache-Control"); got != "no-cache" {
+			t.Errorf("GET %s: Cache-Control = %q, want no-cache", path, got)
+		}
+		if resp.Header.Get("Last-Modified") == "" {
+			t.Errorf("GET %s: no Last-Modified, so revalidating would cost the whole file", path)
+		}
+	}
+
+	// Revalidating an unchanged file must be cheap.
+	req, _ := http.NewRequest("GET", srv.URL+"/traffic/light/plain/1d.png", nil)
+	first, err := srv.Client().Get(srv.URL + "/traffic/light/plain/1d.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Body.Close()
+	req.Header.Set("If-Modified-Since", first.Header.Get("Last-Modified"))
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotModified {
+		t.Errorf("conditional request returned %d, want 304", resp.StatusCode)
+	}
+}
