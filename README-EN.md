@@ -202,12 +202,16 @@ query. Because it becomes a path segment, a name is letters, digits, dot, dash
 or underscore; anything else is refused at load rather than quietly becoming
 something else in the URL.
 
-Pages poll a few-byte `version.json` every 15 seconds. Image URLs carry the
-version of the pass that drew them, so a browser refetches a picture exactly
-when there is a new one rather than on a timer -- the caches in front still
-work. The first poll runs at load, so a page served from a cache still ends up
-showing the current drawings. A countdown in the header says how long until the
-next pass.
+Pages poll a few-byte `version.json` every 15 seconds and refetch the drawings
+only when it moves. **Image URLs are stable**, so every cache in front of them
+keeps hitting; the version says whether there is something new, it does not
+name the file.
+
+An open page has no reason to ask again on its own -- an `<img>` is fetched
+once and then sits there, however short its freshness. The poll supplies that
+reason, and only when it is warranted. It also runs at load, so a page served
+from a cache still ends up showing the current drawings. A countdown in the
+header says how long until the next pass.
 
 Each drawing carries the time it was made in its bottom right corner, in the
 same zone -- so a picture that has been saved or passed on still says how old

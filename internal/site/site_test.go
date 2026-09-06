@@ -797,8 +797,10 @@ func TestPagesCarryAndPublishTheVersion(t *testing.T) {
 		if !strings.Contains(body, `data-interval="300"`) {
 			t.Errorf("%s does not carry the interval to count down", name)
 		}
-		if !strings.Contains(body, ".png?v="+want) {
-			t.Errorf("%s has an image URL without the version", name)
+		// The version identifies the pass; it must not name the file, or every
+		// cache in front of the site would miss on each redraw.
+		if strings.Contains(body, ".png?") {
+			t.Errorf("%s carries a query on an image URL, which defeats the caches", name)
 		}
 	}
 
@@ -825,7 +827,7 @@ func TestASecondPassMovesTheVersionOn(t *testing.T) {
 	if second := s.version(); second <= first {
 		t.Errorf("version did not advance: %d then %d", first, second)
 	}
-	if !strings.Contains(read(t, s, "index.html"), ".png?v="+strconv.FormatInt(s.version(), 10)) {
-		t.Error("the page still points at the previous pass")
+	if !strings.Contains(read(t, s, "index.html"), `data-version="`+strconv.FormatInt(s.version(), 10)+`"`) {
+		t.Error("the page still reports the previous pass")
 	}
 }

@@ -85,7 +85,7 @@
   </figcaption>
   <a href="{{.Href}}"><img alt="{{.Title}}"
      data-base="{{.Base}}" data-range="{{.Range}}"
-     src="{{.Base}}/light/plain/{{.Range}}.png?v={{.Version}}"></a>
+     src="{{.Base}}/light/plain/{{.Range}}.png"></a>
 </figure>
 {{end}}
 
@@ -111,45 +111,42 @@
   try { dark = matchMedia('(prefers-color-scheme: dark)').matches } catch (e) {}
   var theme = get(TK, dark ? 'dark' : 'light');
 
-  // The version rides on the URL, so a picture is fetched again exactly when
-  // there is a new one. Nothing is re-requested on a timer.
+  // Image URLs are stable, so every cache in front of them keeps working. What
+  // an open page lacks is any reason to ask again: an <img> is fetched once and
+  // then sits there, however short its freshness. The poll below supplies that
+  // reason, and only when there is actually a new drawing.
+  function srcFor(img) {
+    var box = img.closest('[data-variant]');
+    var v = box ? box.getAttribute('data-variant') : 'plain';
+    return img.getAttribute('data-base') + '/' + theme + '/' + v + '/' +
+           img.getAttribute('data-range') + '.png';
+  }
+
   function paint() {
     root.setAttribute('data-theme', theme);
     each('[data-theme-toggle]', function (b) { b.textContent = theme === 'dark' ? 'Light' : 'Dark' });
     each('img[data-base]', function (img) {
-      var box = img.closest('[data-variant]');
-      var v = box ? box.getAttribute('data-variant') : 'plain';
-      var src = img.getAttribute('data-base') + '/' + theme + '/' + v + '/' +
-                img.getAttribute('data-range') + '.png?v=' + version;
+      var src = srcFor(img);
       if (img.getAttribute('src') !== src) img.setAttribute('src', src);
     });
   }
 
-  function tick() {
-    var el = document.querySelector('[data-tick]');
-    if (!el) return;
-    if (!interval) { el.textContent = ''; return; }
-    var left = Math.round((nextAt - Date.now()) / 1000);
-    if (left <= 0) { el.textContent = 'updating\u2026'; return; }
-    var m = Math.floor(left / 60), sec = left % 60;
-    el.textContent = 'next in ' + m + ':' + (sec < 10 ? '0' : '') + sec;
-  }
-
-  // A few bytes, so checking often costs nothing. The first call runs at load:
-  // the page itself may have come from a cache, and this is what corrects it.
-  function poll() {
-    fetch(up + 'version.json', { cache: 'no-store' })
-      .then(function (r) { return r.json() })
-      .then(function (v) {
-        if (String(v.version) !== version) {
-          version = String(v.version);
-          interval = v.interval || interval;
-          nextAt = interval > 0 ? (v.version + interval) * 1000 : 0;
-          paint();
-        }
-        tick();
-      })
-      .catch(function () {});
+  // Warm the browser's own cache first, then re-point at the same URLs. The
+  // fetches are ordinary and conditional, so an unchanged picture costs a 304
+  // and the edge answers most of them; re-pointing then shows what arrived
+  // without a second request.
+  function refresh() {
+    var imgs = [];
+    each('img[data-base]', function (img) { imgs.push(img) });
+    Promise.all(imgs.map(function (img) {
+      return fetch(srcFor(img)).catch(function () {});
+    })).then(function () {
+      imgs.forEach(function (img) {
+        var src = srcFor(img);
+        img.removeAttribute('src');
+        img.setAttribute('src', src);
+      });
+    });
   }
 
   // Each drawing remembers its own choice, so it survives following a link.

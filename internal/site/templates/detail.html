@@ -8,7 +8,7 @@
     {{if $.Peak}}<button type="button" data-peak-toggle aria-pressed="false">peak</button>{{end}}
   </figcaption>
   <img alt="{{.Title}}" data-base="{{$.Base}}" data-range="{{.Range}}"
-       src="{{$.Base}}/light/plain/{{.Range}}.png?v={{$.Version}}">
+       src="{{$.Base}}/light/plain/{{.Range}}.png">
 </figure>
 {{end}}
 {{template "foot" .}}
