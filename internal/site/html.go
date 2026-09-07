@@ -6,7 +6,6 @@ import (
 	"html/template"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/ExpTechTW/prometheus-render/internal/config"
 )
@@ -30,7 +29,6 @@ var pages = template.Must(template.ParseFS(templateFS, "templates/*.html"))
 type page struct {
 	Title     string
 	SiteTitle string
-	Now       string
 	Up        string
 
 	// Interval is how often the site is redrawn, in seconds. A page counts
@@ -91,13 +89,12 @@ func (s *Site) writePages() error {
 	if err := s.writeFonts(); err != nil {
 		return err
 	}
-	now := time.Now().In(s.Cfg.Location()).Format("2006-01-02 15:04:05 MST")
 	title := s.Cfg.Output.Title
 
 	interval := int(s.Cfg.Output.Interval.Duration().Seconds())
 	chrome := func(name, pageTitle string) page {
 		return page{
-			Title: pageTitle, SiteTitle: title, Now: now, Up: upTo(name),
+			Title: pageTitle, SiteTitle: title, Up: upTo(name),
 			Interval: interval,
 		}
 	}

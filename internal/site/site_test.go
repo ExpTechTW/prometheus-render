@@ -607,41 +607,6 @@ func TestEveryImageAPageOffersExists(t *testing.T) {
 	t.Logf("checked %d image URLs", checked)
 }
 
-// The time under a page should agree with the time along the axes above it,
-// so both follow the config rather than whatever zone the container runs in.
-func TestFooterFollowsTheConfiguredTimezone(t *testing.T) {
-	for _, tc := range []struct{ tz, want string }{
-		{"Asia/Taipei", "CST"},
-		{"UTC", "UTC"},
-		{"America/New_York", ""}, // EST or EDT, depending on the date
-	} {
-		t.Run(tc.tz, func(t *testing.T) {
-			s := build(t, newSource(t), 2, 0, "")
-			s.Cfg.Defaults.TZ = tc.tz
-			if err := s.Render(context.Background()); err != nil {
-				t.Fatalf("Render: %v", err)
-			}
-
-			index := read(t, s, "index.html")
-			if !strings.Contains(index, "Updated ") {
-				t.Error("the footer does not say when it was updated")
-			}
-			loc, err := time.LoadLocation(tc.tz)
-			if err != nil {
-				t.Fatalf("LoadLocation: %v", err)
-			}
-			want := tc.want
-			if want == "" {
-				want = time.Now().In(loc).Format("MST")
-			}
-			stamp := time.Now().In(loc).Format("2006-01-02 15:")
-			if !strings.Contains(index, stamp) || !strings.Contains(index, want) {
-				t.Errorf("footer is not in %s: want %q and %q", tc.tz, stamp, want)
-			}
-		})
-	}
-}
-
 // The peak switch belongs to a drawing, not to a page: a detail page shows
 // four timescales and each is toggled on its own.
 func TestPeakSwitchesPerDrawing(t *testing.T) {
@@ -739,26 +704,38 @@ graphs:
 }
 
 // The stamp on a drawing is in the zone the graph is drawn in, and every
-// drawing in a pass carries the same one.
+// drawing in a pass carries the same one. It is the only time the site
+// states: a page repeating it could only ever disagree with the image above
+// it, once the image was redrawn and the page was not.
 func TestDrawingsAreStampedInTheConfiguredZone(t *testing.T) {
-	s := build(t, newSource(t), 4, 0, "")
-	s.Cfg.Defaults.TZ = "Asia/Taipei"
-	if err := s.Render(context.Background()); err != nil {
-		t.Fatalf("Render: %v", err)
-	}
+	for _, tc := range []struct{ tz, want string }{
+		{"Asia/Taipei", "CST"},
+		{"UTC", "UTC"},
+		{"America/New_York", ""}, // EST or EDT, depending on the date
+	} {
+		t.Run(tc.tz, func(t *testing.T) {
+			s := build(t, newSource(t), 4, 0, "")
+			s.Cfg.Defaults.TZ = tc.tz
+			if err := s.Render(context.Background()); err != nil {
+				t.Fatalf("Render: %v", err)
+			}
 
-	got := s.stampedAt()
-	want := time.Now().In(s.Cfg.Location()).Format("2006-01-02 15:")
-	if !strings.HasPrefix(got, "Updated ") || !strings.Contains(got, want) {
-		t.Errorf("stamp = %q, want it to carry %q in Asia/Taipei", got, want)
-	}
-	if !strings.Contains(got, "CST") {
-		t.Errorf("stamp = %q, want the configured zone rather than the machine's", got)
-	}
-
-	// The page footer and the drawings agree to the minute.
-	if minute := got[len("Updated ") : len("Updated ")+16]; !strings.Contains(read(t, s, "index.html"), minute) {
-		t.Errorf("the page and the drawings disagree about when: %q", minute)
+			want := tc.want
+			if want == "" {
+				want = time.Now().In(s.Cfg.Location()).Format("MST")
+			}
+			stamp := time.Now().In(s.Cfg.Location()).Format("2006-01-02 15:")
+			got := s.stampedAt()
+			if !strings.HasPrefix(got, "Updated ") || !strings.Contains(got, stamp) {
+				t.Errorf("stamp = %q, want it to carry %q", got, stamp)
+			}
+			if !strings.Contains(got, want) {
+				t.Errorf("stamp = %q, want %s rather than the machine's zone", got, want)
+			}
+			if page := read(t, s, "index.html"); strings.Contains(page, "Updated ") {
+				t.Error("a page states a time of its own, which the drawings already carry")
+			}
+		})
 	}
 }
 
