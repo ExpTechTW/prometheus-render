@@ -235,6 +235,155 @@ graphs:
 	}
 }
 
+// A window written into an expression once flattens every timescale that
+// borrows it: a five-second burst read through rate(x[5m]) arrives sixty times
+// smaller than it was. $step is how one line of config follows the timescale
+// it is drawn at instead.
+func TestStepFollowsTheTimescale(t *testing.T) {
+	c := parse(t, `
+source:
+  resolution: 5s
+defaults:
+  peak: true
+  ranges:
+    - {name: 1d, from: -1d,   step: 5m}
+    - {name: 1w, from: -7d,   step: 30m}
+    - {name: 1y, from: -365d, step: 1d}
+graphs:
+  - name: a
+    series: [{expr: 'sum(rate(rx[$step])) * 8', legend: RX}]
+`)
+	g := c.Graphs[0]
+	want := []string{
+		"sum(rate(rx[5m])) * 8",
+		"sum(rate(rx[30m])) * 8",
+		"sum(rate(rx[1d])) * 8",
+	}
+	for i, r := range g.Ranges {
+		if got := g.Values(r, "", g.Theme, VariantPlain)["target"][0]; got != want[i] {
+			t.Errorf("%s averages over %q, want %q", r.Name, got, want[i])
+		}
+	}
+
+	// The peak is the point of the exercise: its inner samples are taken at
+	// the step it is sampled at, not the bucket they are reduced into. Reading
+	// the same 5m window inside a 5m bucket is what made the peak trace a copy
+	// of the average.
+	daily := g.Values(g.Ranges[0], "", g.Theme, VariantPeak)["target"]
+	if len(daily) != 2 {
+		t.Fatalf("targets = %d, want the average and its peak", len(daily))
+	}
+	if got := daily[1]; got != "max_over_time((sum(rate(rx[10s])) * 8)[5m:10s])" {
+		t.Errorf("peak target = %q", got)
+	}
+	if daily[0] == daily[1] {
+		t.Error("the peak reads exactly what the average does")
+	}
+}
+
+// ${step} is spelt both ways, as the region placeholder is, and the two
+// substitutions do not tread on each other.
+func TestStepAndRegionShareOneExpression(t *testing.T) {
+	c := parse(t, `
+regions:
+  label: instance
+defaults:
+  ranges: [{name: 1d, from: -1d, step: 5m}]
+graphs:
+  - name: a
+    series: [{expr: 'rate(rx{instance="$instance"}[${step}])'}]
+`)
+	g := c.Graphs[0]
+	got := g.Values(g.Ranges[0], "node-1", g.Theme, VariantPlain)["target"][0]
+	if want := `rate(rx{instance="node-1"}[5m])`; got != want {
+		t.Errorf("target = %q, want %q", got, want)
+	}
+}
+
+// The finest timescale has nothing below it to peak at. It used to fall back
+// to its own step, which puts a single sample in each bucket and draws a peak
+// trace identical to the average it sits behind.
+func TestFinestRangePeaksAtTheSourceResolution(t *testing.T) {
+	for _, tc := range []struct{ name, resolution, step, want string }{
+		{"coarse buckets peak at two scrapes", "5s", "5m", "10s"},
+		{"already at the source's resolution", "5s", "10s", "10s"},
+		// Whole seconds, not "1m0s": a step is a single-unit offset, and a
+		// derived one that cannot be read back fails the load it came from.
+		{"a doubling that would print as 1m0s", "30s", "5m", "60s"},
+		{"no resolution given keeps the old fallback", "", "5m", "5m"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := parse(t, "source: {resolution: "+defaulted(tc.resolution, "0")+"}\n"+`
+defaults:
+  peak: true
+  ranges: [{name: 1d, from: -1d, step: `+tc.step+`}]
+graphs:
+  - name: a
+    series: [{expr: up}]
+`)
+			if got := c.Graphs[0].Ranges[0].PeakStep; got != tc.want {
+				t.Errorf("peak_step = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Both ceilings a step can walk into, refused while the file is being read
+// rather than as an empty graph or a failed query hours later.
+func TestParseRejectsAStepTheSourceCannotServe(t *testing.T) {
+	for _, tc := range []struct{ name, src, want string }{
+		{
+			// rate() needs two samples; a 5s window over a 5s scrape holds one.
+			"a window shorter than two scrapes",
+			`source: {resolution: 5s}
+defaults: {ranges: [{name: fine, from: -1h, step: 5s}]}
+graphs: [{name: a, series: [{expr: 'rate(rx[$step])'}]}]`,
+			"two scrapes",
+		},
+		{
+			// A year of five-second peaks is 6.3 million points per series.
+			"a subquery past the source's point ceiling",
+			`defaults: {peak: true, ranges: [{name: 1y, from: -365d, step: 1d, peak_step: 5s}]}
+graphs: [{name: a, series: [{expr: up}]}]`,
+			"subquery",
+		},
+		{
+			// Widening this silently would leave $step describing a
+			// resolution the drawing is no longer at.
+			"more points than one query returns",
+			`defaults: {ranges: [{name: 1y, from: -365d, step: 1m}]}
+graphs: [{name: a, series: [{expr: up}]}]`,
+			"one query",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.src))
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not say %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// A step that short is only a problem for an expression that borrows it.
+func TestAShortStepIsFineWithoutThePlaceholder(t *testing.T) {
+	parse(t, `
+source: {resolution: 5s}
+defaults: {ranges: [{name: fine, from: -1h, step: 5s}]}
+graphs: [{name: a, series: [{expr: 'rate(rx[1m])'}]}]
+`)
+}
+
+// The label names a placeholder, and one name is already spoken for.
+func TestRegionLabelCannotBeStep(t *testing.T) {
+	if _, err := Parse([]byte("regions: {label: step}\n" + minimal)); err == nil {
+		t.Error("expected an error")
+	}
+}
+
 func TestPeakStepCanBeOverridden(t *testing.T) {
 	c := parse(t, `
 defaults:
@@ -256,8 +405,10 @@ graphs:
 	}
 }
 
-// The label value is what the query needs; the picture should carry the name
-// the config chose for it.
+// A drawing changes when its rightmost column does, and a column is one
+// averaging step wide. So the interval a timescale is redrawn at follows its
+// step: the yearly graph is not worth a query every fifteen seconds when the
+// picture it would return next moves tomorrow.
 func TestDrawingsAreCaptionedFromTheConfig(t *testing.T) {
 	c := parse(t, `
 regions:

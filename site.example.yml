@@ -17,6 +17,12 @@ source:
   # the source as one burst.
   max_queries: 8
 
+  # How often this source scrapes -- prometheus.yml calls it scrape_interval.
+  # It is what $step below is measured against: rate() needs two samples to
+  # report anything, so no window may be shorter than twice this, and the
+  # finest timescale takes its peaks there. Omit it and none of that applies.
+  resolution: 15s
+
 output:
   dir: site
   title: Network
@@ -67,9 +73,16 @@ defaults:
   # only where it rises above them. The page offers it as a button.
   peak: true
   # Each timescale peaks at the resolution of the one below it, so the yearly
-  # graph peaks at the monthly graph's. Set peak_step on a range to override.
+  # graph peaks at the monthly graph's, and the finest one peaks at two scrapes
+  # of source.resolution. Set peak_step on a range to override.
 
   # MRTG's four timescales. Omit this key to get exactly these.
+  #
+  # A step is also what $step expands to in the queries below, so one line of
+  # config is read at the resolution it is drawn at: the daily graph asks for
+  # rate(x[5m]) where the yearly one asks for rate(x[1d]). A window written out
+  # as a constant instead would flatten all four -- a five-second burst read
+  # through rate(x[5m]) arrives sixty times smaller than it was.
   ranges:
     - {name: 1d, title: "Daily (5 min average)",    from: -1d,   step: 5m}
     - {name: 1w, title: "Weekly (30 min average)",  from: -7d,   step: 30m}
@@ -82,18 +95,18 @@ graphs:
     title: Traffic
     vtitle: Mbps
     series:
-      - expr: sum(rate(nginx_http_in_bytes_total{region="$region"}[5m])) * 8 / 1e6
+      - expr: sum(rate(nginx_http_in_bytes_total{region="$region"}[$step])) * 8 / 1e6
         legend: RX
-      - expr: sum(rate(nginx_http_bytes_total{region="$region"}[5m])) * 8 / 1e6
+      - expr: sum(rate(nginx_http_bytes_total{region="$region"}[$step])) * 8 / 1e6
         legend: TX
 
   - name: pps
     title: Packets
     vtitle: packets/sec
     series:
-      - expr: sum(rate(node_network_receive_packets_total{region="$region"}[5m]))
+      - expr: sum(rate(node_network_receive_packets_total{region="$region"}[$step]))
         legend: RX
-      - expr: sum(rate(node_network_transmit_packets_total{region="$region"}[5m]))
+      - expr: sum(rate(node_network_transmit_packets_total{region="$region"}[$step]))
         legend: TX
 
   - name: request
@@ -102,7 +115,7 @@ graphs:
     area: none
     y_min: 0
     series:
-      - expr: sum(rate(nginx_http_requests_total{region="$region"}[5m]))
+      - expr: sum(rate(nginx_http_requests_total{region="$region"}[$step]))
         legend: requests
 
   # A graph that exists in one place only. Without this it would be drawn for
@@ -124,7 +137,7 @@ graphs:
     vtitle: Mbps
     global: true
     series:
-      - expr: sum(rate(nginx_http_in_bytes_total[5m])) * 8 / 1e6
+      - expr: sum(rate(nginx_http_in_bytes_total[$step])) * 8 / 1e6
         legend: RX
-      - expr: sum(rate(nginx_http_bytes_total[5m])) * 8 / 1e6
+      - expr: sum(rate(nginx_http_bytes_total[$step])) * 8 / 1e6
         legend: TX

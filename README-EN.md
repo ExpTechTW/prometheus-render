@@ -146,6 +146,7 @@ prometheus-render --config site.yml
 ```yaml
 source:
   url: http://localhost:9090
+  resolution: 15s   # how often it scrapes; $step is measured against this
 
 output:
   dir: site
@@ -167,8 +168,8 @@ graphs:
     title: Traffic
     vtitle: Mbps
     series:
-      - {expr: 'sum(rate(nginx_http_in_bytes_total[5m])) * 8 / 1e6', legend: RX}
-      - {expr: 'sum(rate(nginx_http_bytes_total[5m])) * 8 / 1e6',    legend: TX}
+      - {expr: 'sum(rate(nginx_http_in_bytes_total[$step])) * 8 / 1e6', legend: RX}
+      - {expr: 'sum(rate(nginx_http_bytes_total[$step])) * 8 / 1e6',    legend: TX}
 ```
 
 A full example is in [`site.example.yml`](site.example.yml).
@@ -187,7 +188,7 @@ regions:
 graphs:
   - name: traffic
     series:
-      - {expr: 'sum(rate(nginx_http_in_bytes_total{region="$region"}[5m]))', legend: RX}
+      - {expr: 'sum(rate(nginx_http_in_bytes_total{region="$region"}[$step]))', legend: RX}
 
   - name: sensor
     only_regions: [tnn]      # something that lives in one place
@@ -248,6 +249,24 @@ A label value that could reshape a query -- one carrying a quote, a backslash
 or a brace -- is refused rather than escaped. Real infrastructure labels do not
 look like that.
 
+#### Resolution
+
+`$step` in an expression is the sampling interval of the trace being drawn, so
+one line of config is read at the resolution it is drawn at: the daily graph
+asks for `rate(x[5m])` where the yearly one asks for `rate(x[1d])`.
+
+A window written out as a constant flattens all four timescales instead, and it
+flattens them badly. Through `rate(x[5m])`, five seconds of 100 Mbps arrive as
+**+1.7 Mbps** -- sixty times smaller than they were, which on the canvas is
+nothing at all. The same burst through `rate(x[10s])` is still around 50 Mbps.
+
+`source.resolution` is how often the source scrapes. `rate()` needs two samples
+to report anything, so it is also the floor: a step under twice it is **refused
+at load** when the expressions use `$step`, because a graph that comes out
+empty reads as an outage rather than as a setting. A range asking for more
+points than a source will return is refused there too, rather than having its
+step quietly widened out from under the window it just described.
+
 #### Themes and peaks
 
 Every graph is drawn in a light and a dark palette, and a graph with
@@ -260,6 +279,15 @@ mean, drawn behind the averages so they show only where they rise above them.
 **Each timescale peaks at the resolution of the one below it** -- the yearly
 graph at the monthly graph's -- which is both what MRTG does and what keeps the
 subquery from asking for a hundred thousand points.
+
+**The finest timescale peaks at the source's own resolution**, since there is
+nothing below it to borrow: with `resolution: 5s`, five-minute buckets are
+peaked over ten-second samples. A peak reads `$step` as the interval its inner
+samples are taken at rather than the bucket they are reduced into, so it looks
+as close to the source's raw resolution as `rate()` allows -- which is the
+whole reason it is worth drawing a second trace. Peaking at its own step
+instead puts one sample in each bucket and draws a peak identical to the
+average behind it.
 
 One query feeds all four images: a palette and a peak trace change how samples
 are drawn, not which are read.
@@ -323,7 +351,9 @@ variant is `peak` (averages plus the peak traces) or `plain` (averages alone).
 - **Time ranges** accept the rrdtool spellings: `-1h`, `-90min`, `-7d`, `-2w`,
   `now-1d`, plus Unix timestamps and RFC3339.
 - **Sample ceiling** is 11000 points per query, the Prometheus limit. Past that
-  the step widens rather than the query failing.
+  the step widens rather than the query failing -- except in a config file,
+  where the range is refused at load instead, since a widened step would leave
+  `$step` describing a resolution the drawing is no longer at.
 - **Bucket convention**, as in RRD and MRTG: a sample taken at time T is drawn
   in the bucket *ending* at T.
 

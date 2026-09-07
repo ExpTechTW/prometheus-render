@@ -133,6 +133,7 @@ prometheus-render --config site.yml
 ```yaml
 source:
   url: http://localhost:9090
+  resolution: 15s   # 資料源多久抓一次；$step 以此為基準
 
 output:
   dir: site
@@ -154,8 +155,8 @@ graphs:
     title: Traffic
     vtitle: Mbps
     series:
-      - {expr: 'sum(rate(nginx_http_in_bytes_total[5m])) * 8 / 1e6', legend: RX}
-      - {expr: 'sum(rate(nginx_http_bytes_total[5m])) * 8 / 1e6',    legend: TX}
+      - {expr: 'sum(rate(nginx_http_in_bytes_total[$step])) * 8 / 1e6', legend: RX}
+      - {expr: 'sum(rate(nginx_http_bytes_total[$step])) * 8 / 1e6',    legend: TX}
 ```
 
 完整範例見 [`site.example.yml`](site.example.yml)。
@@ -174,7 +175,7 @@ regions:
 graphs:
   - name: traffic
     series:
-      - {expr: 'sum(rate(nginx_http_in_bytes_total{region="$region"}[5m]))', legend: RX}
+      - {expr: 'sum(rate(nginx_http_in_bytes_total{region="$region"}[$step]))', legend: RX}
 
   - name: sensor
     only_regions: [tnn]      # 只存在於一個地點的東西
@@ -221,6 +222,20 @@ log 會警告。
 會重塑查詢的標籤值（含引號、反斜線、大括號的）會被拒絕而不是跳脫——真實的基礎設施
 標籤不會長那樣。
 
+#### 解析度
+
+運算式裡的 `$step` 是**這條線自己的取樣間隔**，所以同一行設定會用它被畫出來的解析度
+去讀：日尺度問的是 `rate(x[5m])`，年尺度問的是 `rate(x[1d])`。
+
+把窗口寫死成常數則會把四層一起壓平，而且壓得很兇：5 秒、100 Mbps 的突波經過
+`rate(x[5m])` 之後剩 **+1.7 Mbps**——衰減 60 倍，畫布上等於不存在；同一個突波用
+`rate(x[10s])` 讀還有約 50 Mbps。
+
+`source.resolution` 是資料源多久抓一次。`rate()` 至少要兩個樣本才有值，所以它同時是
+下限：運算式用了 `$step` 而 step 小於它的兩倍時，**載入就報錯**——一張空白的圖看起來
+像故障，而不像設定寫錯。點數超過資料源單次查詢上限的尺度同樣在載入時擋下，而不是
+讓 step 被默默放寬、與剛剛展開的窗口對不上。
+
 #### 主題與峰值
 
 每張圖都畫成 light 與 dark 兩種配色；`peak: true` 的圖另外畫出帶峰值線的版本。
@@ -229,6 +244,11 @@ log 會警告。
 峰值是 MRTG 的作法：每個取樣桶取最大值而非平均，畫在平均線後面，所以只在高過平均
 處露出。**每一層的峰值取自下一層較細的解析度**（年圖取自月圖的），這既符合 MRTG，
 也讓子查詢的點數不會爆掉。
+
+**最細的那一層底下沒有更細的可借，所以取自資料源本身的解析度**：`resolution: 5s`
+時，5 分鐘的桶是以 10 秒的樣本取峰值。峰值線把 `$step` 讀成「內層樣本的間隔」而不是
+「外層桶的寬度」，所以它會貼近資料源的原始解析度——這正是多畫一條線的意義。若改成取
+自它自己的 step，一個桶裡只有一個樣本，畫出來的峰值線會與它背後的平均線完全相同。
 
 一次查詢餵四張圖——配色與峰值改變的是畫法，不是讀取的資料。
 
@@ -287,7 +307,8 @@ make examples
 - **時間窗**接受 rrdtool 的寫法：`-1h`、`-90min`、`-7d`、`-2w`、`now-1d`，
   也吃 Unix 時間戳和 RFC3339。
 - **取樣上限**為每次查詢 11000 點（Prometheus 的限制）。超過時會自動放寬
-  `--step`，而不是讓查詢失敗。
+  `--step`，而不是讓查詢失敗；設定檔則相反，超過就在載入時報錯——放寬 step 會讓
+  `$step` 展開出來的窗口與實際畫出來的解析度對不上。
 - **時間軸依慣例**：時間戳 T 的樣本畫在「結束於 T」的格子裡，與 RRD/MRTG 相同。
 
 ## 目錄結構

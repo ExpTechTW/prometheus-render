@@ -20,7 +20,18 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/ExpTechTW/prometheus-render/internal/promapi"
+	"github.com/ExpTechTW/prometheus-render/internal/query"
 )
+
+// stepPlaceholder is the name an expression writes to be given the sampling
+// interval of the trace being drawn: $step, or ${step}.
+const stepPlaceholder = "step"
+
+// maxSubqueryPoints is how many points a source will walk for one subquery per
+// series -- VictoriaMetrics spells it -search.maxPointsSubqueryPerTimeseries.
+// A peak step fine enough to pass it is refused at load, rather than turning
+// into a failed query hours later on a graph nobody is watching.
+const maxSubqueryPoints = 100000
 
 // Config is a whole site.
 type Config struct {
@@ -95,6 +106,14 @@ type Source struct {
 	// out over every graph and timescale together, which would otherwise reach
 	// the server as one burst.
 	MaxQueries int `yaml:"max_queries"`
+
+	// Resolution is how often this source scrapes, and it is what $step is
+	// measured against. rate() needs two samples to report anything, so the
+	// shortest window an expression can usefully ask for is twice this, and
+	// the finest timescale takes its peaks there rather than at its own step.
+	// Left unset, none of that applies and the peaks ladder as they always
+	// have.
+	Resolution Duration `yaml:"resolution"`
 }
 
 // Output is where the site is written and how often it is redrawn.
@@ -122,8 +141,9 @@ type Defaults struct {
 	Peak *bool `yaml:"peak"`
 
 	// PeakStep is the resolution those peaks are taken at. It defaults to the
-	// step of the finest timescale, so the weekly graph peaks at the daily
-	// graph's resolution -- again as MRTG does it.
+	// step of the timescale one finer, so the weekly graph peaks at the daily
+	// graph's resolution -- again as MRTG does it -- and the finest one peaks
+	// at the source's own scrape interval.
 	PeakStep string `yaml:"peak_step"`
 
 	// Theme is the light one; DarkTheme is what the page switches to. Both are
@@ -152,6 +172,8 @@ type Range struct {
 	// PeakStep is the resolution this timescale's peaks are taken at. Left
 	// unset it becomes the step of the timescale one finer, which is what
 	// MRTG does: the yearly graph peaks at the monthly graph's resolution.
+	// The finest timescale has nothing below it and peaks at two scrapes of
+	// source.resolution instead, or at its own step when that is unset.
 	//
 	// That also keeps the subquery bounded. A year of daily buckets sampled
 	// every five minutes is a hundred thousand points per series, which real
@@ -302,6 +324,13 @@ func Parse(b []byte) (*Config, error) {
 	if c.Regions.Label != "" && !nameRE.MatchString(c.Regions.Label) {
 		return nil, fmt.Errorf("config: regions.label %q is not a label name", c.Regions.Label)
 	}
+	// The label names a placeholder the expressions write, and that one name
+	// is already taken by the timescale's own step.
+	if c.Regions.Label == stepPlaceholder {
+		return nil, fmt.Errorf(
+			"config: regions.label %q collides with $%s, which carries the timescale's own step",
+			c.Regions.Label, stepPlaceholder)
+	}
 	// A region's name is what its pages are filed under, so it has to be
 	// usable as a path segment. Saying so here beats a name that silently
 	// becomes something else in the URL.
@@ -320,7 +349,7 @@ func Parse(b []byte) (*Config, error) {
 	for i, g := range c.Graphs {
 		g.label = c.Regions.Label
 		g.titles = c.Regions.Titles
-		if err := g.normalise(c.Defaults); err != nil {
+		if err := g.normalise(c.Defaults, time.Duration(c.Source.Resolution)); err != nil {
 			return nil, fmt.Errorf("config: graph %d: %w", i, err)
 		}
 		if seen[g.Name] {
@@ -332,7 +361,9 @@ func Parse(b []byte) (*Config, error) {
 }
 
 // normalise fills a graph in from the defaults and checks it can be drawn.
-func (g *Graph) normalise(d Defaults) error {
+// res is how often the source scrapes, zero when the config does not say: it
+// is the floor every window and every peak step is measured against.
+func (g *Graph) normalise(d Defaults, res time.Duration) error {
 	if !nameRE.MatchString(g.Name) {
 		return fmt.Errorf("name %q must be a path-safe name, e.g. \"traffic\"", g.Name)
 	}
@@ -408,20 +439,36 @@ func (g *Graph) normalise(d Defaults) error {
 		if r.Title == "" {
 			r.Title = r.Name
 		}
-		if _, err := promapi.ParseTime(defaulted(r.From, "-1d"), now); err != nil {
+		from, err := promapi.ParseTime(defaulted(r.From, "-1d"), now)
+		if err != nil {
 			return fmt.Errorf("range %q: from: %w", r.Name, err)
 		}
+		until := now
 		if r.Until != "" {
-			if _, err := promapi.ParseTime(r.Until, now); err != nil {
+			if until, err = promapi.ParseTime(r.Until, now); err != nil {
 				return fmt.Errorf("range %q: until: %w", r.Name, err)
 			}
 		}
+		span := until.Sub(from)
+
+		var step time.Duration
 		if r.Step != "" {
-			if _, err := promapi.ParseStep(r.Step); err != nil {
+			if step, err = promapi.ParseStep(r.Step); err != nil {
 				return fmt.Errorf("range %q: step: %w", r.Name, err)
 			}
 		} else if g.peaks() {
 			return fmt.Errorf("range %q: peak needs an explicit step", r.Name)
+		}
+		// Past the ceiling the query package widens the step rather than let
+		// the query fail, which would leave a $step window describing a
+		// resolution the drawing is no longer at. Say so here instead.
+		if step > 0 && span/step > query.DefaultMaxPoints {
+			return fmt.Errorf("range %q: step %s over %s is %d points, past the %d a source "+
+				"returns for one query; widen the step",
+				r.Name, r.Step, span, span/step, query.DefaultMaxPoints)
+		}
+		if err := g.tooFineFor(res, r.Name, "step", r.Step, step); err != nil {
+			return err
 		}
 
 		if g.peaks() {
@@ -433,11 +480,30 @@ func (g *Graph) normalise(d Defaults) error {
 				r.PeakStep = g.PeakStep
 			case i > 0:
 				r.PeakStep = g.Ranges[i-1].Step
+			case res >= time.Second && 2*res < step:
+				// The finest timescale has nothing below it to peak at, so it
+				// peaks at the source's own resolution -- doubled, because
+				// rate() needs two samples to report anything. Peaking at its
+				// own step, which is what this did before the source's
+				// resolution was known, puts one sample in each bucket: a
+				// peak trace identical to the average drawn over it.
+				r.PeakStep = stepOf(2 * res)
 			default:
+				// Already drawn as finely as the source is told apart. There
+				// is nothing below to peak at, and the average is the peak.
 				r.PeakStep = r.Step
 			}
-			if _, err := promapi.ParseStep(r.PeakStep); err != nil {
+			peak, err := promapi.ParseStep(r.PeakStep)
+			if err != nil {
 				return fmt.Errorf("range %q: peak_step: %w", r.Name, err)
+			}
+			if span/peak > maxSubqueryPoints {
+				return fmt.Errorf("range %q: peaking over %s every %s is %d points per series, "+
+					"past the %d a source returns for one subquery; widen peak_step",
+					r.Name, span, r.PeakStep, span/peak, maxSubqueryPoints)
+			}
+			if err := g.tooFineFor(res, r.Name, "peak_step", r.PeakStep, peak); err != nil {
+				return err
 			}
 		}
 	}
@@ -508,7 +574,7 @@ func (g *Graph) Values(r Range, region, theme, variant string) url.Values {
 	// A legend is added for every target, empty or not, so the two lists stay
 	// the same length and pair up by position.
 	for _, s := range g.Series {
-		v.Add("target", g.expr(s.Expr, region))
+		v.Add("target", g.expr(s.Expr, region, r.Step))
 		v.Add("legend", s.Legend)
 	}
 	if variant == VariantPeak && g.peaks() {
@@ -516,7 +582,7 @@ func (g *Graph) Values(r Range, region, theme, variant string) url.Values {
 		// and fourth colours -- which are named for exactly this -- and the
 		// legend still reads in list order.
 		for _, s := range g.Series {
-			v.Add("target", peakExpr(g.expr(s.Expr, region), r.Step, r.PeakStep))
+			v.Add("target", peakExpr(g.expr(s.Expr, region, r.PeakStep), r.Step, r.PeakStep))
 			v.Add("legend", peakLegend(s.Legend))
 		}
 		// Drawing them first puts them behind, so a peak shows only where it
@@ -567,19 +633,67 @@ func (g *Graph) regionTitle(region string) string {
 	return region
 }
 
-// expr puts the region into an expression. The placeholder is the label being
-// split on, so a site split by "region" writes $region or ${region}.
+// expr puts the region and the trace's own sampling interval into an
+// expression. The region placeholder is the label being split on, so a site
+// split by "region" writes $region or ${region}; the interval is always
+// $step.
 //
-// Nothing is escaped here: a value that could reshape the query is refused by
-// SafeRegion before it ever reaches this point.
-func (g *Graph) expr(e, region string) string {
-	if g.label == "" || region == "" {
+// $step is what lets one line of config follow the timescale: the daily graph
+// reads rate(x[5m]) where the yearly one reads rate(x[1d]), instead of a
+// window written once flattening all four. A peak trace is handed the step its
+// inner samples are taken at rather than the bucket they are reduced into, so
+// its samples are as short as the source can tell apart -- which is the whole
+// reason a peak is worth drawing next to an average.
+//
+// Nothing is escaped here: a region value that could reshape the query is
+// refused by SafeRegion before it ever reaches this point, and a step is a
+// duration this package has already parsed.
+func (g *Graph) expr(e, region, step string) string {
+	pairs := make([]string, 0, 8)
+	if g.label != "" && region != "" {
+		pairs = append(pairs, "${"+g.label+"}", region, "$"+g.label, region)
+	}
+	if step != "" {
+		pairs = append(pairs, "${"+stepPlaceholder+"}", step, "$"+stepPlaceholder, step)
+	}
+	if len(pairs) == 0 {
 		return e
 	}
-	return strings.NewReplacer(
-		"${"+g.label+"}", region,
-		"$"+g.label, region,
-	).Replace(e)
+	return strings.NewReplacer(pairs...).Replace(e)
+}
+
+// usesStep reports whether any of this graph's expressions asks to follow the
+// timescale, which is what makes the resolution floor below worth checking.
+func (g *Graph) usesStep() bool {
+	for _, s := range g.Series {
+		if strings.Contains(s.Expr, "$"+stepPlaceholder) ||
+			strings.Contains(s.Expr, "${"+stepPlaceholder+"}") {
+			return true
+		}
+	}
+	return false
+}
+
+// tooFineFor refuses a step that would expand $step into a window the source
+// cannot have put two samples in. rate() over a single sample reports nothing
+// at all, so the graph comes out empty -- and empty looks like an outage, from
+// nowhere near the setting that caused it.
+func (g *Graph) tooFineFor(res time.Duration, rangeName, field, spelt string, d time.Duration) error {
+	if res <= 0 || d <= 0 || d >= 2*res || !g.usesStep() {
+		return nil
+	}
+	return fmt.Errorf(
+		"range %q: %s: %s is under two scrapes of the source's %s, so a $%s window holds at "+
+			"most one sample and rate() reports nothing; use %s or more",
+		rangeName, field, spelt, stepOf(res), stepPlaceholder, stepOf(2*res))
+}
+
+// stepOf spells a duration the way a step is written. Whole seconds is the
+// form that reads back: ParseStep takes a single-unit offset, so a duration
+// that prints itself as "1m30s" would not survive the round trip -- and a
+// source scraping every 30s would have produced exactly that.
+func stepOf(d time.Duration) string {
+	return strconv.FormatInt(int64(d/time.Second), 10) + "s"
 }
 
 // peakExpr wraps an expression so it reports the highest value in each sample
