@@ -27,11 +27,13 @@ import (
 // interval of the trace being drawn: $step, or ${step}.
 const stepPlaceholder = "step"
 
-// maxSubqueryPoints is how many points a source will walk for one subquery per
-// series -- VictoriaMetrics spells it -search.maxPointsSubqueryPerTimeseries.
-// A peak step fine enough to pass it is refused at load, rather than turning
-// into a failed query hours later on a graph nobody is watching.
-const maxSubqueryPoints = 100000
+// defaultSubqueryPoints is how many points a source will walk for one subquery
+// per series -- VictoriaMetrics spells it
+// -search.maxPointsSubqueryPerTimeseries, and this is its default. A peak step
+// fine enough to pass it is refused at load, rather than turning into a failed
+// query hours later on a graph nobody is watching.
+// source.max_subquery_points says otherwise.
+const defaultSubqueryPoints = 100000
 
 // Config is a whole site.
 type Config struct {
@@ -114,6 +116,20 @@ type Source struct {
 	// Left unset, none of that applies and the peaks ladder as they always
 	// have.
 	Resolution Duration `yaml:"resolution"`
+
+	// MaxSubqueryPoints is how many points this source will walk for one
+	// subquery per series, and a peak step fine enough to pass it is refused
+	// at load. Raising it here is only half of it: the source enforces the
+	// same ceiling itself, under -search.maxPointsSubqueryPerTimeseries or
+	// whatever it calls that, and the two want to agree.
+	//
+	// It is worth raising to reach the source's own resolution at a long
+	// timescale, where the ladder otherwise runs out of room -- what crosses
+	// the wire is one point per plot column either way, so the cost is the
+	// source walking the samples, not the render reading them. A recording
+	// rule and peak_expr buy the same fidelity far more cheaply per query,
+	// but only for the time since the rule started.
+	MaxSubqueryPoints int `yaml:"max_subquery_points"`
 }
 
 // Output is where the site is written and how often it is redrawn.
@@ -341,6 +357,9 @@ func Parse(b []byte) (*Config, error) {
 	if c.Source.Timeout == 0 {
 		c.Source.Timeout = Duration(30 * time.Second)
 	}
+	if c.Source.MaxSubqueryPoints <= 0 {
+		c.Source.MaxSubqueryPoints = defaultSubqueryPoints
+	}
 	if c.Source.MaxQueries <= 0 {
 		c.Source.MaxQueries = 8
 	}
@@ -388,8 +407,8 @@ func Parse(b []byte) (*Config, error) {
 	for i, g := range c.Graphs {
 		g.label = c.Regions.Label
 		g.titles = c.Regions.Titles
-		if err := g.normalise(c.Defaults,
-			time.Duration(c.Source.Resolution), time.Duration(c.Output.Interval)); err != nil {
+		if err := g.normalise(c.Defaults, c.Source,
+			time.Duration(c.Output.Interval)); err != nil {
 			return nil, fmt.Errorf("config: graph %d: %w", i, err)
 		}
 		if seen[g.Name] {
@@ -401,11 +420,12 @@ func Parse(b []byte) (*Config, error) {
 }
 
 // normalise fills a graph in from the defaults and checks it can be drawn.
-// res is how often the source scrapes, zero when the config does not say: it
-// is the floor every window and every peak step is measured against. every is
-// the site's redraw interval, which each timescale's own is rounded up to a
-// multiple of.
-func (g *Graph) normalise(d Defaults, res, every time.Duration) error {
+// src is where the samples come from: its scrape interval is the floor every
+// window and every peak step is measured against, and its subquery budget is
+// what a peak ladder is spent out of. every is the site's redraw interval,
+// which each timescale's own is rounded up to a multiple of.
+func (g *Graph) normalise(d Defaults, src Source, every time.Duration) error {
+	res := time.Duration(src.Resolution)
 	if !nameRE.MatchString(g.Name) {
 		return fmt.Errorf("name %q must be a path-safe name, e.g. \"traffic\"", g.Name)
 	}
@@ -579,11 +599,12 @@ func (g *Graph) normalise(d Defaults, res, every time.Duration) error {
 			// already taken somewhere else, at whatever resolution that took
 			// it, and none of this applies to it.
 			if g.laddersAt(r.Name) {
-				if span/peak > maxSubqueryPoints {
+				if points := int(span / peak); points > src.MaxSubqueryPoints {
 					return fmt.Errorf("range %q: peaking over %s every %s is %d points per series, "+
-						"past the %d a source returns for one subquery; widen peak_step "+
-						"or give the series a peak_expr",
-						r.Name, span, r.PeakStep, span/peak, maxSubqueryPoints)
+						"past the %d this source walks for one subquery; widen peak_step, "+
+						"give the series a peak_expr, or raise source.max_subquery_points "+
+						"here and at the source",
+						r.Name, span, r.PeakStep, points, src.MaxSubqueryPoints)
 				}
 				if err := g.tooFineFor(res, r.Name, "peak_step", r.PeakStep, peak); err != nil {
 					return err

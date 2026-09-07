@@ -409,6 +409,32 @@ graphs:
 // averaging step wide. So the interval a timescale is redrawn at follows its
 // step: the yearly graph is not worth a query every fifteen seconds when the
 // picture it would return next moves tomorrow.
+// The other way out of that budget is to raise it. What a subquery returns is
+// one point per bucket either way, so the ceiling is on what the source walks
+// to get there -- if it is willing to walk a year of scrapes every eight
+// hours, nothing here should stand in the way.
+func TestTheSubqueryBudgetCanBeRaised(t *testing.T) {
+	const src = `
+defaults:
+  peak: true
+  ranges: [{name: 1y, from: -365d, step: 8h, peak_step: 30s}]
+graphs: [{name: a, series: [{expr: up}]}]
+`
+	// A year of thirty-second peaks is a million points per series.
+	if _, err := Parse([]byte(src)); err == nil {
+		t.Fatal("expected the default ceiling to refuse a million points")
+	} else if !strings.Contains(err.Error(), "max_subquery_points") {
+		t.Errorf("error %q does not point at the way out", err)
+	}
+
+	c := parse(t, "source: {max_subquery_points: 1200000}\n"+src)
+	g := c.Graphs[0]
+	got := g.Values(g.Ranges[0], "", g.Theme, VariantPeak)["target"]
+	if want := "max_over_time((up)[8h:30s])"; got[1] != want {
+		t.Errorf("1y peaks over %q, want %q", got[1], want)
+	}
+}
+
 // The ladder runs out of budget at the long end: a year of ten-second samples
 // is three million points per series, so the yearly graph peaks at forty
 // minutes and a short burst reaches it flattened. A recording rule has already

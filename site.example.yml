@@ -23,6 +23,17 @@ source:
   # finest timescale takes its peaks there. Omit it and none of that applies.
   resolution: 15s
 
+  # How many points this source will walk for one subquery per series --
+  # VictoriaMetrics spells it -search.maxPointsSubqueryPerTimeseries, and
+  # 100000 is its default. A peak step fine enough to pass it is refused while
+  # this file is read rather than failing hours later on a graph nobody is
+  # watching. Raising it here is only half of it: raise it at the source too.
+  #
+  # Worth raising to peak at the source's resolution over a long timescale,
+  # where the ladder runs out of room. What crosses the wire is one point per
+  # plot column either way -- the cost is the source walking the samples.
+  # max_subquery_points: 1200000
+
 output:
   dir: site
   title: Network

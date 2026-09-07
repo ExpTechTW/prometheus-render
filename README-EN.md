@@ -342,7 +342,15 @@ series:
 
 `$step` is the bucket there rather than the samples inside it: what the rule
 holds is already a maximum, and a subquery over it would step past the maxima
-it exists to keep. `peak_ranges` leaves the fine end on the ladder, where it
+it exists to keep. The other way out is to raise the ceiling. `source.max_subquery_points` (100000
+by default, matching `-search.maxPointsSubqueryPerTimeseries`) is what the
+ladder is spent out of, and a subquery returns one point per bucket whatever it
+walked to get there -- so a year peaked every 30s costs the source a million
+points and the render twelve hundred. Raise it here and at the source, and the
+long timescales read the raw samples they always had, with no rule to keep and
+no history to wait for.
+
+`peak_ranges` leaves the fine end on the ladder, where it
 already reads at the source's own resolution and has nothing to gain. A
 timescale drawn this way is not held to the subquery budget, because it no
 longer asks for one.
