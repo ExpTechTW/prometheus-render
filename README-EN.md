@@ -331,6 +331,7 @@ variant is `peak` (averages plus the peak traces) or `plain` (averages alone).
 
 ```
 tsgraph/                the drawing library, usable on its own
+tsgraph/fonts           the embedded face, Maple Mono cut to ASCII
 cmd/prometheus-render   CLI
 internal/promapi        query_range client, time parsing, densifying
 internal/query          window and step resolution, parallel fetch
@@ -345,4 +346,6 @@ hack/                   checks that read the rendered pixels back
 
 ## License
 
-Apache 2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+Apache 2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). The embedded
+face is Maple Mono, under the SIL Open Font License 1.1 — see
+[`tsgraph/fonts/OFL.txt`](tsgraph/fonts/OFL.txt).

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"html/template"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -12,6 +13,12 @@ import (
 
 //go:embed templates
 var templateFS embed.FS
+
+// The page font travels with the pages, so a reader without it installed still
+// sees what the drawings are lettered in. See tsgraph/fonts for the cut.
+//
+//go:embed fonts/*.woff2
+var fontFS embed.FS
 
 var pages = template.Must(template.ParseFS(templateFS, "templates/*.html"))
 
@@ -81,6 +88,9 @@ type detailPage struct {
 // It runs after the images and separately from them, so the pages still
 // describe the config when a query failed and an image is stale.
 func (s *Site) writePages() error {
+	if err := s.writeFonts(); err != nil {
+		return err
+	}
 	now := time.Now().In(s.Cfg.Location()).Format("2006-01-02 15:04:05 MST")
 	title := s.Cfg.Output.Title
 
@@ -194,6 +204,35 @@ func (s *Site) regionList() []config.Region {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]config.Region(nil), s.regions...)
+}
+
+// writeFonts puts the font files beside the pages, and only when they are
+// missing or differ. Rewriting them each pass would move their timestamps
+// every interval and cost every reader a revalidation of a file that never
+// changes.
+func (s *Site) writeFonts() error {
+	entries, err := fontFS.ReadDir("fonts")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(s.Cfg.Output.Dir, "fonts")
+	if err := ensureDir(dir); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		want, err := fontFS.ReadFile("fonts/" + e.Name())
+		if err != nil {
+			return err
+		}
+		path := filepath.Join(dir, e.Name())
+		if have, err := os.ReadFile(path); err == nil && bytes.Equal(have, want) {
+			continue
+		}
+		if err := writeAtomic(path, want); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Site) writePage(name, tmpl string, data any) error {

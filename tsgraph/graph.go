@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"golang.org/x/image/font"
-	"golang.org/x/image/font/gofont/gomono"
 	"golang.org/x/image/font/opentype"
 )
 
@@ -146,7 +145,7 @@ func Render(all []Series, o Options) ([]byte, error) {
 		o.Base = 1000
 	}
 
-	fnt, err := opentype.Parse(gomono.TTF)
+	fnt, err := opentype.Parse(monoTTF)
 	if err != nil {
 		return nil, err
 	}

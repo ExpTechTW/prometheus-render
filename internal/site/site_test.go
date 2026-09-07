@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -874,4 +875,78 @@ func TestDrawingsAreHandedToTheElementDirectly(t *testing.T) {
 	if strings.Contains(body, ".png?") {
 		t.Error("an image URL carries a query")
 	}
+}
+
+// The pages letter themselves in the same face the drawings are lettered in,
+// which only holds if the font travels with them: a reader without it
+// installed has nowhere else to get it from. Writing it again on every pass
+// would be its own bug -- the timestamp would move each interval and cost
+// every reader a revalidation of a file that never changes.
+func TestPagesCarryTheFontTheyAreLetteredIn(t *testing.T) {
+	src := newSource(t)
+	src.labels = []string{"tnn", "tyo"}
+	s := buildSplit(t, src, "")
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	root := s.Cfg.Output.Dir
+	fontRE := regexp.MustCompile(`url\("([^"]+\.woff2)"\)`)
+	seen := map[string]bool{}
+
+	err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".html") {
+			return err
+		}
+		rel, _ := filepath.Rel(root, p)
+		dir := path.Dir(filepath.ToSlash(rel))
+		body, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		found := fontRE.FindAllStringSubmatch(string(body), -1)
+		if len(found) == 0 {
+			return fmt.Errorf("%s asks for no font", rel)
+		}
+		for _, m := range found {
+			u := path.Join(dir, m[1])
+			seen[path.Base(u)] = true
+			if _, e := os.Stat(filepath.Join(root, filepath.FromSlash(u))); e != nil {
+				t.Errorf("%s asks for %s, which is not there", rel, u)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) < 2 {
+		t.Errorf("pages ask for %d fonts, want the regular and the bold", len(seen))
+	}
+
+	before := stamps(t, filepath.Join(root, "fonts"))
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("second Render: %v", err)
+	}
+	if after := stamps(t, filepath.Join(root, "fonts")); !maps.Equal(before, after) {
+		t.Error("a redraw rewrote the fonts, which moves their timestamps for nothing")
+	}
+}
+
+// stamps is the modification time of every file in dir, by name.
+func stamps(t *testing.T, dir string) map[string]time.Time {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dir, err)
+	}
+	out := map[string]time.Time{}
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			t.Fatalf("stat %s: %v", e.Name(), err)
+		}
+		out[e.Name()] = info.ModTime()
+	}
+	return out
 }

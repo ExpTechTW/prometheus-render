@@ -294,6 +294,7 @@ make examples
 
 ```
 tsgraph/               繪圖函式庫，可獨立使用
+tsgraph/fonts           內嵌的字體，Maple Mono 的 ASCII 子集
 cmd/prometheus-render   CLI
 internal/promapi        query_range 客戶端、時間解析、稠密化
 internal/query          時間窗與 step 決策、平行抓取
@@ -309,3 +310,5 @@ hack/                   讀回渲染像素的檢查工具
 ## 授權
 
 Apache 2.0，見 [`LICENSE`](LICENSE) 與 [`NOTICE`](NOTICE)。
+內嵌的字體是 Maple Mono，走 SIL Open Font License 1.1，見
+[`tsgraph/fonts/OFL.txt`](tsgraph/fonts/OFL.txt)。

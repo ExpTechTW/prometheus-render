@@ -15,11 +15,19 @@
   :root[data-theme="light"] { color-scheme: light }
 
   * { box-sizing: border-box }
-  /* Monospace throughout, to sit with the drawings, which are lettered in Go
-     Mono. Named faces first, then the platform's own; nothing is fetched. */
+  /* The pages are lettered in the face the drawings are: Maple Mono, cut to
+     printable ASCII, 14 KB for the pair and served from the site's own
+     directory. A reader who has the full font installed uses theirs. */
+  @font-face { font-family:"Maple Mono"; font-style:normal; font-weight:400;
+    font-display:swap;
+    src:local("Maple Mono NF CN"),local("Maple Mono"),
+        url("{{.Up}}fonts/maple-mono-regular.woff2") format("woff2") }
+  @font-face { font-family:"Maple Mono"; font-style:normal; font-weight:700;
+    font-display:swap;
+    src:local("Maple Mono NF CN Bold"),local("Maple Mono Bold"),
+        url("{{.Up}}fonts/maple-mono-bold.woff2") format("woff2") }
   body { margin:0; background:var(--bg); color:var(--fg);
-         font:14px/1.55 "Maple Mono NF CN","Maple Mono NF","Maple Mono",
-              ui-monospace,SFMono-Regular,Menlo,Consolas,monospace }
+         font:14px/1.55 "Maple Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace }
   a { color:var(--link) }
   main { padding:1rem 1.25rem 2rem; max-width:1100px; margin:0 auto }
 

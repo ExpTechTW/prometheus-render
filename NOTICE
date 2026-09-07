@@ -11,3 +11,9 @@ The tsgraph package draws in the style of RRDtool and MRTG, and uses their
 colour conventions, but implements its own axis and scaling algorithms. The
 vertical scale follows Paul S. Heckbert, "Nice Numbers for Graph Labels",
 Graphics Gems, 1990.
+
+The lettering is Maple Mono (https://github.com/subframe7536/maple-font),
+Copyright 2022 The Maple Mono Project Authors, cut down to printable ASCII and
+carried in tsgraph/fonts and internal/site/fonts. It is licensed under the SIL
+Open Font License 1.1, a copy of which is in tsgraph/fonts/OFL.txt, not under
+the Apache License above.
