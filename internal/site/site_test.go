@@ -318,8 +318,25 @@ func TestRunRedrawsOnTheInterval(t *testing.T) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	// Long enough that a machine with other things to do still gets there: a
+	// deadline sized to a couple of intervals can be spent entirely on the
+	// first pass, and the timer is then blamed for never firing. The watcher
+	// below stops as soon as it has, so the usual wait is one interval.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	go func() {
+		for {
+			if len(src.queries()) > onePass {
+				cancel()
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Millisecond):
+			}
+		}
+	}()
 	if err := s.Run(ctx); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
