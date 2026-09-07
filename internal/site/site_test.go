@@ -309,6 +309,14 @@ func TestRunRedrawsOnTheInterval(t *testing.T) {
 	src := newSource(t)
 	s := build(t, src, 4, 0, "")
 	s.Cfg.Output.Interval = config.Duration(60 * time.Millisecond)
+	// These timescales average in half-hour buckets, so they would not be due
+	// again for half an hour. This test is about the timer rather than the
+	// cadence, so let every pass redraw.
+	for _, g := range s.Cfg.Graphs {
+		for i := range g.Ranges {
+			g.Ranges[i].Every = 0
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
 	defer cancel()
@@ -320,11 +328,79 @@ func TestRunRedrawsOnTheInterval(t *testing.T) {
 	if !strings.Contains(first, "Test Site") {
 		t.Error("the site was not written")
 	}
-	// Four images per pass; more than one pass must have happened.
+	// Two graphs over two timescales is six targets a pass; more than that
+	// means the timer fired again after the first.
+	if got := len(src.queries()); got <= onePass {
+		t.Errorf("the source was asked %d times, want more than the %d of a single pass: "+
+			"the timer never fired a second render", got, onePass)
+	}
+}
+
+// What the test config asks the source for once: traffic has two series and
+// load one, over two timescales.
+const onePass = 6
+
+// A drawing changes when its rightmost column does, and a column is one
+// averaging step wide. Redrawing faster than that spends a query to return the
+// picture already on disk, which for the yearly graph is most of a day of
+// them.
+func TestSlowTimescalesAreNotDrawnEveryPass(t *testing.T) {
+	s := build(t, newSource(t), 4, 0, "")
+	s.Cfg.Output.Interval = config.Duration(15 * time.Second)
+	for _, g := range s.Cfg.Graphs {
+		for i := range g.Ranges {
+			every := 15 * time.Second
+			if g.Ranges[i].Name == "1w" {
+				every = time.Hour
+			}
+			g.Ranges[i].Every = config.Duration(every)
+		}
+	}
+
+	jobs := s.jobs()
+	at := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	if got := len(s.due(jobs, at)); got != len(jobs) {
+		t.Fatalf("the first pass drew %d of %d timescales; none of them has been drawn yet",
+			got, len(jobs))
+	}
+
+	next := s.due(jobs, at.Add(15*time.Second))
+	for _, j := range next {
+		if j.rng.Name != "1d" {
+			t.Errorf("%s was drawn again after 15s, though it only changes hourly", j)
+		}
+	}
+	if len(next) == 0 {
+		t.Error("nothing was drawn at all; the timescale due every pass was skipped too")
+	}
+
+	if got := len(s.due(jobs, at.Add(time.Hour))); got != len(jobs) {
+		t.Errorf("an hour on, %d of %d timescales were drawn, want all of them", got, len(jobs))
+	}
+}
+
+// A timescale is only counted as drawn once it has been. Otherwise one
+// unreachable minute would leave a yearly graph stale until tomorrow.
+func TestAFailedTimescaleIsDrawnAgainNextPass(t *testing.T) {
+	src := newSource(t)
+	src.fail = true
+	s := build(t, src, 2, 0, "")
+	s.Cfg.Output.Interval = config.Duration(time.Hour)
+
+	if err := s.Render(context.Background()); err == nil {
+		t.Fatal("expected Render to report the failed queries")
+	}
 	src.mu.Lock()
-	defer src.mu.Unlock()
-	if src.peak == 0 {
-		t.Error("the timer never fired a render")
+	src.fail = false
+	src.mu.Unlock()
+
+	// Both passes fall inside the same half-hour bucket the ranges redraw on,
+	// so only the failure can bring the second one back.
+	if err := s.Render(context.Background()); err != nil {
+		t.Fatalf("second Render: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.Cfg.Output.Dir, "traffic/light/plain/1d.png")); err != nil {
+		t.Errorf("the pass after a failure did not draw it again: %v", err)
 	}
 }
 
@@ -790,6 +866,11 @@ func TestPagesCarryOnlyTheInterval(t *testing.T) {
 		body := read(t, s, name)
 		if !strings.Contains(body, `data-interval="300"`) {
 			t.Errorf("%s does not carry the interval", name)
+		}
+		// And each drawing carries how often it is worth asking for again,
+		// which is the other half of the same arithmetic.
+		if !strings.Contains(body, `data-every="1800"`) {
+			t.Errorf("%s does not say how often its drawings change", name)
 		}
 		// A query on an image URL would give every cache in front of the site
 		// a fresh key on each redraw.

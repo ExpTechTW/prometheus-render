@@ -48,9 +48,15 @@ type Site struct {
 	noData  map[string]bool
 	failed  map[string]bool
 
+	// redrawn is the boundary each job was last drawn for, so a timescale
+	// that is not due again is left alone rather than queried for a picture
+	// identical to the one already on disk.
+	redrawn map[string]time.Time
+
 	// What the last pass actually did, for the line it logs.
 	queries int
 	images  int
+	skipped int
 }
 
 // job is one fetch: one graph, in one region, at one timescale.
@@ -138,9 +144,13 @@ func (s *Site) pass(ctx context.Context) error {
 		s.logf("drew with errors in %s: %v", took, err)
 	default:
 		s.mu.Lock()
-		images, queries := s.images, s.queries
+		images, queries, skipped := s.images, s.queries, s.skipped
 		s.mu.Unlock()
-		s.logf("drew %d images from %d queries in %s", images, queries, took)
+		note := ""
+		if skipped > 0 {
+			note = fmt.Sprintf(", leaving %d not yet due", skipped)
+		}
+		s.logf("drew %d images from %d queries in %s%s", images, queries, took, note)
 	}
 	// The lead exists so the drawings are in place by the boundary. A pass that
 	// outruns it publishes late, and pages arriving on time see the one before.
@@ -173,7 +183,13 @@ func (s *Site) Render(ctx context.Context) error {
 	if len(jobs) == 0 {
 		return errors.New("nothing to draw")
 	}
-	for _, j := range jobs {
+
+	// Not every timescale is redrawn every pass. A graph averaging in
+	// eight-hour buckets gains a column every eight hours, so the rest of the
+	// time the query would return the picture already on disk.
+	todo := s.due(jobs, s.boundary(time.Now()))
+
+	for _, j := range todo {
 		for _, t := range j.graph.Themes() {
 			for _, v := range j.graph.Variants() {
 				dir := filepath.Join(s.Cfg.Output.Dir, filepath.FromSlash(imageDir(j.region.Name, j.graph.Name, t.Name, v)))
@@ -189,18 +205,19 @@ func (s *Site) Render(ctx context.Context) error {
 	s.noData = map[string]bool{}
 	s.failed = map[string]bool{}
 	s.queries, s.images = 0, 0
+	s.skipped = len(jobs) - len(todo)
 	s.mu.Unlock()
 
 	// Errors are collected by index rather than through a channel, so a
 	// failing graph does not stop the others from being drawn.
-	errs := make([]error, len(jobs))
+	errs := make([]error, len(todo))
 
 	workers := s.Cfg.Output.Workers
 	if workers <= 0 {
 		workers = runtime.NumCPU()
 	}
-	if workers > len(jobs) {
-		workers = len(jobs)
+	if workers > len(todo) {
+		workers = len(todo)
 	}
 
 	queue := make(chan int)
@@ -210,11 +227,11 @@ func (s *Site) Render(ctx context.Context) error {
 		go func() {
 			defer wg.Done()
 			for k := range queue {
-				errs[k] = s.draw(ctx, jobs[k])
+				errs[k] = s.draw(ctx, todo[k])
 			}
 		}()
 	}
-	for k := range jobs {
+	for k := range todo {
 		select {
 		case queue <- k:
 		case <-ctx.Done():
@@ -225,6 +242,15 @@ func (s *Site) Render(ctx context.Context) error {
 	}
 	close(queue)
 	wg.Wait()
+
+	// A job that failed is not counted as drawn for its boundary, so the next
+	// pass tries again rather than leaving a yearly graph stale for a day over
+	// one unreachable minute.
+	for k, j := range todo {
+		if errs[k] != nil {
+			s.forget(j)
+		}
+	}
 
 	// The pages are written even when some images failed, so the site still
 	// reflects the config instead of vanishing on a transient query error.
@@ -268,6 +294,60 @@ func (s *Site) jobs() []job {
 		}
 	}
 	return out
+}
+
+// boundary is the wall-clock moment this pass is drawing for. A pass begins a
+// little before the boundary it publishes at, so it is that boundary -- not
+// the clock as the pass reads it -- that decides which timescales are due.
+func (s *Site) boundary(now time.Time) time.Time {
+	every := s.Cfg.Output.Interval.Duration()
+	if every <= 0 {
+		return now
+	}
+	return now.Add(leadFor(every)).Truncate(every)
+}
+
+// due narrows a pass to the timescales that have something new to show at the
+// given boundary, and records what it chose.
+//
+// Each range carries how often it is redrawn, defaulting to its own step:
+// below that a redraw repaints the same columns, so the query buys nothing.
+// The intervals are whole multiples of the site's own, so a boundary a
+// timescale is due at is always a boundary a pass lands on -- and the page,
+// counting down from the same numbers, asks for the image just after it was
+// written.
+//
+// Without an interval the site is drawn once, by cron or by hand, and there is
+// no later pass for anything to be deferred to.
+func (s *Site) due(jobs []job, at time.Time) []job {
+	if s.Cfg.Output.Interval.Duration() <= 0 {
+		return jobs
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.redrawn == nil {
+		s.redrawn = map[string]time.Time{}
+	}
+	out := make([]job, 0, len(jobs))
+	for _, j := range jobs {
+		every := j.rng.Every.Duration()
+		if every > 0 {
+			bucket := at.Truncate(every)
+			if was, ok := s.redrawn[j.String()]; ok && was.Equal(bucket) {
+				continue
+			}
+			s.redrawn[j.String()] = bucket
+		}
+		out = append(out, j)
+	}
+	return out
+}
+
+// forget drops a job's last boundary, so the next pass draws it again.
+func (s *Site) forget(j job) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.redrawn, j.String())
 }
 
 // scope lists the regions a graph is drawn for. A global graph, or any graph

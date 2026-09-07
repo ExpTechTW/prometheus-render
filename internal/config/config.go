@@ -179,6 +179,18 @@ type Range struct {
 	// every five minutes is a hundred thousand points per series, which real
 	// servers refuse.
 	PeakStep string `yaml:"peak_step"`
+
+	// Every is how often this timescale is redrawn. One plot column is one
+	// step, so a graph averaging in eight-hour buckets gains a column every
+	// eight hours: redrawing it every fifteen seconds spends a query to change
+	// nothing anybody can see. Left unset it becomes the step itself, which is
+	// the widest interval at which every pass still shows something new.
+	//
+	// It is rounded up to a whole multiple of output.interval, because a pass
+	// is the only moment anything is redrawn. That also lets a page work out
+	// the same boundaries from the same number, as it already does for the
+	// interval.
+	Every Duration `yaml:"every"`
 }
 
 // Graph is one drawing, rendered once per timescale.
@@ -209,6 +221,12 @@ type Graph struct {
 	YMin      *float64 `yaml:"y_min"`
 	YMax      *float64 `yaml:"y_max"`
 	Ranges    []Range  `yaml:"ranges"`
+
+	// Every overrides how often one timescale of this graph is redrawn, keyed
+	// by range name: {1d: 1m, 1y: 12h}. It exists so a graph worth watching
+	// closely can say so without restating the whole ladder of ranges, and a
+	// name it does not have is refused rather than quietly ignored.
+	Every map[string]Duration `yaml:"every"`
 
 	// label is the region label, copied in so Values can find the placeholder.
 	// titles is the names to present regions under, so a drawing is captioned
@@ -349,7 +367,8 @@ func Parse(b []byte) (*Config, error) {
 	for i, g := range c.Graphs {
 		g.label = c.Regions.Label
 		g.titles = c.Regions.Titles
-		if err := g.normalise(c.Defaults, time.Duration(c.Source.Resolution)); err != nil {
+		if err := g.normalise(c.Defaults,
+			time.Duration(c.Source.Resolution), time.Duration(c.Output.Interval)); err != nil {
 			return nil, fmt.Errorf("config: graph %d: %w", i, err)
 		}
 		if seen[g.Name] {
@@ -362,8 +381,10 @@ func Parse(b []byte) (*Config, error) {
 
 // normalise fills a graph in from the defaults and checks it can be drawn.
 // res is how often the source scrapes, zero when the config does not say: it
-// is the floor every window and every peak step is measured against.
-func (g *Graph) normalise(d Defaults, res time.Duration) error {
+// is the floor every window and every peak step is measured against. every is
+// the site's redraw interval, which each timescale's own is rounded up to a
+// multiple of.
+func (g *Graph) normalise(d Defaults, res, every time.Duration) error {
 	if !nameRE.MatchString(g.Name) {
 		return fmt.Errorf("name %q must be a path-safe name, e.g. \"traffic\"", g.Name)
 	}
@@ -413,7 +434,11 @@ func (g *Graph) normalise(d Defaults, res time.Duration) error {
 		g.Base = d.Base
 	}
 	if len(g.Ranges) == 0 {
-		g.Ranges = d.Ranges
+		// A copy, not the slice itself. The fields filled in below are worked
+		// out from the graph -- its peak step, its refresh interval -- and a
+		// shared slice would let the first graph's answers land on every other
+		// graph that inherited the same ranges.
+		g.Ranges = append([]Range(nil), d.Ranges...)
 	}
 	if g.Title == "" {
 		g.Title = g.Name
@@ -422,6 +447,13 @@ func (g *Graph) normalise(d Defaults, res time.Duration) error {
 	if g.TZ != "" {
 		if _, err := time.LoadLocation(g.TZ); err != nil {
 			return fmt.Errorf("tz: %w", err)
+		}
+	}
+
+	for name := range g.Every {
+		if !g.hasRange(name) {
+			return fmt.Errorf("every: %q is not one of this graph's timescales (%s)",
+				name, strings.Join(g.rangeNames(), ", "))
 		}
 	}
 
@@ -470,6 +502,11 @@ func (g *Graph) normalise(d Defaults, res time.Duration) error {
 		if err := g.tooFineFor(res, r.Name, "step", r.Step, step); err != nil {
 			return err
 		}
+
+		if v, ok := g.Every[r.Name]; ok {
+			r.Every = v
+		}
+		r.Every = Duration(refreshOf(r.Every.Duration(), step, every))
 
 		if g.peaks() {
 			// Each timescale peaks at the resolution of the one below it, so
@@ -686,6 +723,48 @@ func (g *Graph) tooFineFor(res time.Duration, rangeName, field, spelt string, d 
 		"range %q: %s: %s is under two scrapes of the source's %s, so a $%s window holds at "+
 			"most one sample and rate() reports nothing; use %s or more",
 		rangeName, field, spelt, stepOf(res), stepPlaceholder, stepOf(2*res))
+}
+
+// refreshOf is how often one timescale is redrawn.
+//
+// Unset, it is the step: one plot column is one step, so redrawing faster than
+// that repaints the same picture with at most its rightmost column moved, and
+// the yearly graph in particular would spend a query every interval for a
+// change nobody can see until tomorrow.
+//
+// Whatever it comes to, it is rounded up to a whole multiple of the site's
+// interval, since a pass is the only moment anything is redrawn. That keeps
+// the boundaries a page counts down to exactly the boundaries a pass lands on,
+// which is the arrangement the interval already has.
+func refreshOf(every, step, interval time.Duration) time.Duration {
+	if every <= 0 {
+		every = step
+	}
+	if interval <= 0 {
+		// Drawn once, by cron or by hand. Nothing is on a timer to skip.
+		return every
+	}
+	if every <= interval {
+		return interval
+	}
+	return (every + interval - 1) / interval * interval
+}
+
+func (g *Graph) hasRange(name string) bool {
+	for _, r := range g.Ranges {
+		if r.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *Graph) rangeNames() []string {
+	out := make([]string, 0, len(g.Ranges))
+	for _, r := range g.Ranges {
+		out = append(out, r.Name)
+	}
+	return out
 }
 
 // stepOf spells a duration the way a step is written. Whole seconds is the

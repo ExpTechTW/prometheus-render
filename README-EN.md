@@ -161,7 +161,7 @@ defaults:
   peak: true        # MRTG's peak traces, offered as a button
   area: first
   tz: Asia/Taipei
-  # Omit ranges to get MRTG's four: 1d / 1w / 1m / 1y
+  # Omit ranges to get MRTG's four: 1d / 1w / 1m / 1y, each redrawn at its step
 
 graphs:
   - name: traffic
@@ -205,13 +205,15 @@ something else in the URL.
 
 Redraws are pinned to the clock: a five-minute interval draws at :00, :05,
 :10, rather than from whenever the process started. A page works out the same
-boundaries from the same interval, so neither side has to ask the other --
-**no version file, no polling**. The page is given one number: the interval.
+boundaries from the same numbers, so neither side has to ask the other --
+**no version file, no polling**. The numbers are the interval and, per drawing,
+how often that timescale is redrawn.
 
 Each pass begins **five seconds early**, so the drawings are in place when the
 boundary arrives. A pass that outruns that lead says so in the log.
 
-The header counts down to the next boundary and swaps the drawings there.
+The header counts down to the next boundary and swaps in the drawings that
+are due at it.
 **Image URLs are stable** (no version query), so every cache in front of them
 keeps hitting.
 
@@ -248,6 +250,42 @@ means unknown rather than absent.
 A label value that could reshape a query -- one carrying a quote, a backslash
 or a brace -- is refused rather than escaped. Real infrastructure labels do not
 look like that.
+
+#### Redraw cadence
+
+**A timescale is redrawn at its own step**, because one plot column is one step
+wide. The yearly graph gains a column tomorrow, so redrawing it every five
+minutes spends 288 queries a day returning the picture already on disk, and
+redrawing it every fifteen seconds spends 5,760.
+
+```yaml
+output:
+  interval: 5m
+
+defaults:
+  ranges:
+    - {name: 1d, from: -1d,   step: 5m}             # every pass
+    - {name: 1y, from: -365d, step: 1d, every: 6h}  # or say otherwise
+
+graphs:
+  - name: requests
+    every: {1w: 5m, 1m: 5m, 1y: 5m}   # the one people leave open
+```
+
+`every` on a range sets the ladder. `every` on a graph overrides one timescale
+of it, keyed by range name, so the graph worth watching closely can say so
+without restating the ladder; a name that is not one of that graph's own
+timescales is refused at load rather than quietly doing nothing.
+
+Each interval is rounded up to a whole multiple of `output.interval`, since a
+pass is the only moment anything is redrawn. That is what keeps the boundary a
+page counts down to exactly the boundary a pass lands on: **each `<img>` knows
+its own cadence**, refetches only itself and only when it is due, while the
+countdown in the header runs to the soonest drawing on the page.
+
+Over MRTG's four timescales that comes to 1.2 queries per graph per pass rather
+than 4. A timescale whose query failed is not counted as drawn, so the next
+pass tries it again instead of leaving a yearly graph stale until tomorrow.
 
 #### Resolution
 

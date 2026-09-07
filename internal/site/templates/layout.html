@@ -82,7 +82,7 @@
     <span class="spacer"></span>
     {{if .Peak}}<button type="button" data-peak-toggle aria-pressed="false">peak</button>{{end}}
   </figcaption>
-  <img alt="{{.Title}}" data-base="{{.Base}}" data-range="{{.Range}}">
+  <img alt="{{.Title}}" data-base="{{.Base}}" data-range="{{.Range}}" data-every="{{.Every}}">
 </figure>
 {{end}}
 
@@ -104,6 +104,20 @@
   var root = document.documentElement;
   var interval = parseInt(root.getAttribute('data-interval') || '0', 10);
   var nextAt = 0;
+
+  // How often one drawing is worth asking for again, and when that next falls
+  // due. A plot column is one averaging step wide, so a graph drawn in
+  // eight-hour buckets gains a column every eight hours; refetching it every
+  // fifteen seconds would spend a request to redraw the same picture. The
+  // server skips those passes for the same reason, and every cadence is a
+  // whole multiple of the interval, so the two land on the same boundaries
+  // without either asking the other.
+  function everyOf(img) {
+    return parseInt(img.getAttribute('data-every') || '0', 10) || interval;
+  }
+  function boundaryOf(every) {
+    return (Math.floor(Date.now() / 1000 / every) + 1) * every * 1000;
+  }
 
   var dark = false;
   try { dark = matchMedia('(prefers-color-scheme: dark)').matches } catch (e) {}
@@ -133,9 +147,25 @@
   // URL it already holds renders from there without a request, and a fetch of
   // that URL fills the HTTP cache, a different store. Going through a blob
   // sidesteps it, while the address on the wire stays put.
-  function show() {
-    var pending = {};
+  //
+  // all fetches every drawing regardless of cadence, which is what a change of
+  // palette or of variant needs: those pick a different file, so what is on
+  // screen is the wrong one until it is replaced. Otherwise only the drawings
+  // whose own boundary has arrived are asked for, and nextAt becomes the
+  // soonest of the boundaries left.
+  function show(all) {
+    var pending = {}, now = Date.now(), soonest = 0;
     each('img[data-base]', function (img) {
+      var every = everyOf(img);
+      var at = parseInt(img.getAttribute('data-at') || '0', 10);
+      var want = all || !at || now >= at;
+      if (want && every > 0) {
+        at = boundaryOf(every);
+        img.setAttribute('data-at', String(at));
+      }
+      if (at > 0 && (!soonest || at < soonest)) soonest = at;
+      if (!want) return;
+
       var url = srcFor(img);
       var got = pending[url] || (pending[url] = fetch(url, { cache: 'reload' })
         .then(function (r) { return r.ok ? r.blob() : null }));
@@ -150,24 +180,16 @@
         if (stale) URL.revokeObjectURL(stale);
       }).catch(function () {});
     });
+    nextAt = soonest;
   }
 
-  // Redraws land on wall-clock boundaries of the interval, and the server
-  // starts each pass a little before one. Both sides work the same boundaries
-  // out from the same number and never ask each other.
-  function boundary() {
-    return (Math.floor(Date.now() / 1000 / interval) + 1) * interval * 1000;
-  }
-
+  // The countdown is to the soonest drawing on the page, which on a page of
+  // one timescale is that timescale's own.
   function tick() {
+    if (nextAt && Date.now() >= nextAt) show(false);
     var left = Math.round((nextAt - Date.now()) / 1000);
-    if (left <= 0) {
-      nextAt = boundary();
-      show();
-      left = Math.round((nextAt - Date.now()) / 1000);
-    }
     var el = document.querySelector('[data-tick]');
-    if (!el) return;
+    if (!el || left < 0) return;
     var m = Math.floor(left / 60), sec = left % 60;
     el.textContent = 'next in ' + (m > 0 ? m + ':' + (sec < 10 ? '0' : '') + sec : sec + 's');
   }
@@ -186,7 +208,7 @@
       theme = theme === 'dark' ? 'light' : 'dark';
       put(TK, theme);
       chrome();
-      show();
+      show(true);
       return;
     }
     var btn = e.target.closest('[data-peak-toggle]');
@@ -198,13 +220,12 @@
     box.setAttribute('data-variant', v);
     put(VK + box.getAttribute('data-key'), v);
     btn.setAttribute('aria-pressed', String(v === 'peak'));
-    show();
+    show(true);
   });
 
   chrome();
-  show();
+  show(true);
   if (interval > 0) {
-    nextAt = boundary();
     tick();
     setInterval(tick, 500);
   }

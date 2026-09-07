@@ -409,6 +409,116 @@ graphs:
 // averaging step wide. So the interval a timescale is redrawn at follows its
 // step: the yearly graph is not worth a query every fifteen seconds when the
 // picture it would return next moves tomorrow.
+func TestEachTimescaleRedrawsAtItsOwnStep(t *testing.T) {
+	c := parse(t, `
+output:
+  interval: 15s
+defaults:
+  ranges:
+    - {name: 1d, from: -1d, step: 5m}
+    - {name: 1y, from: -365d, step: 1d}
+graphs:
+  - name: a
+    series: [{expr: up}]
+`)
+	for i, want := range []time.Duration{5 * time.Minute, 24 * time.Hour} {
+		if got := c.Graphs[0].Ranges[i].Every.Duration(); got != want {
+			t.Errorf("range %q redraws every %s, want its step of %s",
+				c.Graphs[0].Ranges[i].Name, got, want)
+		}
+	}
+}
+
+// A pass is the only moment anything is redrawn, so a cadence that is not a
+// whole number of passes could never be kept -- and the page, counting the
+// same boundaries out for itself, would ask just before the file moved.
+func TestRedrawsAreWholePasses(t *testing.T) {
+	c := parse(t, `
+output:
+  interval: 15s
+defaults:
+  ranges:
+    - {name: 6h, from: -6h, step: 20s}
+    - {name: 1d, from: -1d, step: 5m, every: 7s}
+graphs:
+  - name: a
+    series: [{expr: up}]
+`)
+	for i, want := range []time.Duration{30 * time.Second, 15 * time.Second} {
+		if got := c.Graphs[0].Ranges[i].Every.Duration(); got != want {
+			t.Errorf("range %q redraws every %s, want %s", c.Graphs[0].Ranges[i].Name, got, want)
+		}
+	}
+}
+
+// Drawn once by cron there is no later pass to defer anything to, so nothing
+// is rounded and nothing is skipped.
+func TestWithoutAnIntervalNothingIsRounded(t *testing.T) {
+	c := parse(t, `
+defaults:
+  ranges: [{name: 6h, from: -6h, step: 20s}]
+graphs:
+  - name: a
+    series: [{expr: up}]
+`)
+	if got := c.Graphs[0].Ranges[0].Every.Duration(); got != 20*time.Second {
+		t.Errorf("every = %s, want the step of 20s untouched", got)
+	}
+}
+
+// A graph worth watching more closely says so for the one timescale it means,
+// without restating the whole ladder -- and without that landing on the other
+// graphs which inherited the same ranges.
+func TestAGraphSetsItsOwnRefreshPerTimescale(t *testing.T) {
+	c := parse(t, `
+output:
+  interval: 1m
+defaults:
+  ranges:
+    - {name: 1d, from: -1d, step: 5m}
+    - {name: 1y, from: -365d, step: 1d}
+graphs:
+  - name: watched
+    every: {1d: 1m, 1y: 6h}
+    series: [{expr: up}]
+  - name: quiet
+    series: [{expr: up}]
+`)
+	watched, quiet := c.Graphs[0], c.Graphs[1]
+	for i, want := range []time.Duration{time.Minute, 6 * time.Hour} {
+		if got := watched.Ranges[i].Every.Duration(); got != want {
+			t.Errorf("watched %q redraws every %s, want %s", watched.Ranges[i].Name, got, want)
+		}
+	}
+	for i, want := range []time.Duration{5 * time.Minute, 24 * time.Hour} {
+		if got := quiet.Ranges[i].Every.Duration(); got != want {
+			t.Errorf("quiet %q redraws every %s, want its own step of %s; one graph's "+
+				"setting reached another through the shared defaults",
+				quiet.Ranges[i].Name, got, want)
+		}
+	}
+}
+
+// A misspelt timescale would otherwise do nothing at all, quietly.
+func TestRefreshMustNameATimescale(t *testing.T) {
+	_, err := Parse([]byte(`
+defaults:
+  ranges: [{name: 1d, from: -1d, step: 5m}]
+graphs:
+  - name: a
+    every: {daily: 1m}
+    series: [{expr: up}]
+`))
+	if err == nil {
+		t.Fatal("accepted a refresh interval for a timescale the graph does not have")
+	}
+	if !strings.Contains(err.Error(), "1d") {
+		t.Errorf("error does not say which timescales there are: %v", err)
+	}
+}
+
+// The label value is what the query needs; the picture should carry the name
+// the config chose for it.
 func TestDrawingsAreCaptionedFromTheConfig(t *testing.T) {
 	c := parse(t, `
 regions:

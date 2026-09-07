@@ -31,11 +31,12 @@ type page struct {
 	SiteTitle string
 	Up        string
 
-	// Interval is how often the site is redrawn, in seconds. A page counts
-	// down to the next wall-clock boundary of it and rebuilds its images
-	// there, which is the whole of the arrangement: both sides work it out
-	// from this one number and never ask each other. Zero means the site is
-	// drawn once and not again.
+	// Interval is how often the site is redrawn, in seconds, and the floor on
+	// every drawing's own cadence. A page counts down to the next wall-clock
+	// boundary and refetches the drawings that are due at it, which is the
+	// whole of the arrangement: both sides work it out from the same numbers
+	// and never ask each other. Zero means the site is drawn once and not
+	// again.
 	Interval int
 }
 
@@ -54,6 +55,7 @@ type card struct {
 	Key   string // identifies the drawing to the variant switch
 	Base  string // image path up to the palette, ready for the page to finish
 	Range string
+	Every int // seconds between redraws of this timescale
 	Peak  bool
 }
 
@@ -72,6 +74,7 @@ type listPage struct {
 type rangeImage struct {
 	Title string
 	Range string
+	Every int
 }
 
 type detailPage struct {
@@ -185,6 +188,7 @@ func (s *Site) card(g *config.Graph, region config.Region, from string) card {
 		Key:   base,
 		Base:  up + base,
 		Range: g.Ranges[0].Name,
+		Every: seconds(g.Ranges[0].Every),
 		Peak:  g.Peaks(),
 	}
 }
@@ -192,10 +196,13 @@ func (s *Site) card(g *config.Graph, region config.Region, from string) card {
 func rangeImages(g *config.Graph) []rangeImage {
 	out := make([]rangeImage, 0, len(g.Ranges))
 	for _, r := range g.Ranges {
-		out = append(out, rangeImage{Title: r.Title, Range: r.Name})
+		out = append(out, rangeImage{Title: r.Title, Range: r.Name, Every: seconds(r.Every)})
 	}
 	return out
 }
+
+// seconds is how a page spells a duration: the unit its arithmetic is in.
+func seconds(d config.Duration) int { return int(d.Duration().Seconds()) }
 
 func (s *Site) regionList() []config.Region {
 	s.mu.Lock()

@@ -6,7 +6,7 @@
     <span class="spacer"></span>
     {{if $.Peak}}<button type="button" data-peak-toggle aria-pressed="false">peak</button>{{end}}
   </figcaption>
-  <img alt="{{.Title}}" data-base="{{$.Base}}" data-range="{{.Range}}">
+  <img alt="{{.Title}}" data-base="{{$.Base}}" data-range="{{.Range}}" data-every="{{.Every}}">
 </figure>
 {{end}}
 {{template "foot" .}}

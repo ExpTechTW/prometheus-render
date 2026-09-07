@@ -83,11 +83,19 @@ defaults:
   # rate(x[5m]) where the yearly one asks for rate(x[1d]). A window written out
   # as a constant instead would flatten all four -- a five-second burst read
   # through rate(x[5m]) arrives sixty times smaller than it was.
+  #
+  # A step is also how often the timescale is redrawn, since one plot column is
+  # one step wide: without every below, the yearly graph is left alone for a day
+  # at a time rather than queried every five minutes for a picture whose newest
+  # column does not move until tomorrow. every says otherwise -- here, four
+  # looks a day at the one still filling in. It is rounded up to a whole
+  # multiple of output.interval, because a pass is the only moment anything is
+  # redrawn.
   ranges:
     - {name: 1d, title: "Daily (5 min average)",    from: -1d,   step: 5m}
     - {name: 1w, title: "Weekly (30 min average)",  from: -7d,   step: 30m}
     - {name: 1m, title: "Monthly (2 hour average)", from: -30d,  step: 2h}
-    - {name: 1y, title: "Yearly (1 day average)",   from: -365d, step: 1d}
+    - {name: 1y, title: "Yearly (1 day average)",   from: -365d, step: 1d, every: 6h}
 
 graphs:
   # name is used for the page and the image directory, so keep it path-safe.
@@ -114,6 +122,10 @@ graphs:
     vtitle: req/sec
     area: none
     y_min: 0
+    # The graph people leave open, so every timescale of it refreshes on each
+    # pass instead of once per column. Keyed by range name, so one graph can
+    # say this without restating the whole ladder above.
+    every: {1w: 5m, 1m: 5m, 1y: 5m}
     series:
       - expr: sum(rate(nginx_http_requests_total{region="$region"}[$step]))
         legend: requests
