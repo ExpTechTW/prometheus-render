@@ -409,6 +409,107 @@ graphs:
 // averaging step wide. So the interval a timescale is redrawn at follows its
 // step: the yearly graph is not worth a query every fifteen seconds when the
 // picture it would return next moves tomorrow.
+// The ladder runs out of budget at the long end: a year of ten-second samples
+// is three million points per series, so the yearly graph peaks at forty
+// minutes and a short burst reaches it flattened. A recording rule has already
+// taken that maximum at the source's own resolution, and reading it back needs
+// the bucket rather than a subquery over it.
+func TestALongTimescaleCanPeakFromARecordingRule(t *testing.T) {
+	c := parse(t, `
+source:
+  resolution: 5s
+defaults:
+  peak: true
+  ranges:
+    - {name: 1d, from: -1d,   step: 5m}
+    - {name: 1y, from: -365d, step: 1d}
+graphs:
+  - name: a
+    series:
+      - expr: 'sum(rate(rx[$step])) * 8'
+        peak_expr: 'max_over_time(rx:peak10s[$step]) * 8'
+        peak_ranges: [1y]
+        legend: RX
+`)
+	g := c.Graphs[0]
+
+	daily := g.Values(g.Ranges[0], "", g.Theme, VariantPeak)["target"]
+	if want := "max_over_time((sum(rate(rx[10s])) * 8)[5m:10s])"; daily[1] != want {
+		t.Errorf("1d peaks over %q, want the ladder's %q", daily[1], want)
+	}
+
+	yearly := g.Values(g.Ranges[1], "", g.Theme, VariantPeak)["target"]
+	// $step is the bucket here, not the peak step: what the rule holds is
+	// already a maximum, and sampling it every 40m would keep one value in
+	// eight and discard the peaks in the other seven.
+	if want := "max_over_time(rx:peak10s[1d]) * 8"; yearly[1] != want {
+		t.Errorf("1y peaks over %q, want %q", yearly[1], want)
+	}
+
+	// The average is untouched, so the plain and peak variants still share the
+	// one fetch they always did.
+	if want := "sum(rate(rx[1d])) * 8"; yearly[0] != want {
+		t.Errorf("1y averages over %q, want %q", yearly[0], want)
+	}
+}
+
+// Without peak_ranges it stands for every timescale, which is what a rule fine
+// enough for all of them wants.
+func TestPeakExprWithoutRangesCoversThemAll(t *testing.T) {
+	c := parse(t, `
+defaults:
+  peak: true
+  ranges:
+    - {name: 1d, from: -1d,   step: 5m}
+    - {name: 1y, from: -365d, step: 1d}
+graphs:
+  - name: a
+    series: [{expr: 'rate(rx[$step])', peak_expr: 'max_over_time(rx:peak[$step])'}]
+`)
+	g := c.Graphs[0]
+	for i, want := range []string{"max_over_time(rx:peak[5m])", "max_over_time(rx:peak[1d])"} {
+		if got := g.Values(g.Ranges[i], "", g.Theme, VariantPeak)["target"][1]; got != want {
+			t.Errorf("%s peaks over %q, want %q", g.Ranges[i].Name, got, want)
+		}
+	}
+}
+
+func TestPeakExprIsRefused(t *testing.T) {
+	for _, tc := range []struct{ name, src, want string }{
+		{
+			"on a timescale the graph does not have",
+			`defaults: {peak: true, ranges: [{name: 1d, from: -1d, step: 5m}]}
+graphs: [{name: a, series: [{expr: up, peak_expr: 'max_over_time(up[$step])', peak_ranges: [1y]}]}]`,
+			"timescales",
+		},
+		{
+			// Naming timescales and then not saying what to draw on them.
+			"without an expression to place",
+			`defaults: {peak: true, ranges: [{name: 1d, from: -1d, step: 5m}]}
+graphs: [{name: a, series: [{expr: up, peak_ranges: [1d]}]}]`,
+			"no peak_expr",
+		},
+		{
+			// It would never be drawn, and silence is how a config comes to
+			// say something it does not do.
+			"on a graph that draws no peaks",
+			`defaults: {ranges: [{name: 1d, from: -1d, step: 5m}]}
+graphs: [{name: a, series: [{expr: up, peak_expr: 'max_over_time(up[$step])'}]}]`,
+			"draws no peaks",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.src))
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not say %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestEachTimescaleRedrawsAtItsOwnStep(t *testing.T) {
 	c := parse(t, `
 output:

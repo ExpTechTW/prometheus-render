@@ -239,6 +239,27 @@ type Graph struct {
 type Series struct {
 	Expr   string `yaml:"expr"`
 	Legend string `yaml:"legend"` // {{label}} placeholders, as on the CLI
+
+	// PeakExpr draws this series' peak trace instead of the subquery over
+	// Expr. It is written whole, max_over_time and all, so $step in it is the
+	// bucket being reduced into rather than the resolution of the samples
+	// inside it.
+	//
+	// It exists because the peak ladder runs out of budget at the long end. A
+	// yearly graph peaks at forty-minute samples, since a year of ten-second
+	// ones is three million points per series, so a five-second burst reaches
+	// its peak trace four hundred and eighty times smaller than it was. A
+	// recording rule that keeps the highest ten-second rate of every five
+	// minutes has already taken that maximum at the source's own resolution,
+	// and max_over_time(rule[$step]) reads it back whole at any timescale.
+	PeakExpr string `yaml:"peak_expr"`
+
+	// PeakRanges limits PeakExpr to these timescales, by range name. Empty
+	// means all of them. A recording rule is usually coarser than the finest
+	// timescale, so this is how the fine end goes on reading raw samples --
+	// where the ladder is already at the source's resolution and has nothing
+	// to gain -- while the long end reads the rule.
+	PeakRanges []string `yaml:"peak_ranges"`
 }
 
 // DefaultRanges are MRTG's four timescales, in the order it draws them.
@@ -457,6 +478,25 @@ func (g *Graph) normalise(d Defaults, res, every time.Duration) error {
 		}
 	}
 
+	for i, s := range g.Series {
+		if s.PeakExpr == "" {
+			if len(s.PeakRanges) != 0 {
+				return fmt.Errorf("series %d: peak_ranges names timescales but there is no "+
+					"peak_expr to put on them", i)
+			}
+			continue
+		}
+		if !g.peaks() {
+			return fmt.Errorf("series %d: peak_expr on a graph that draws no peaks", i)
+		}
+		for _, name := range s.PeakRanges {
+			if !g.hasRange(name) {
+				return fmt.Errorf("series %d: peak_ranges: %q is not one of this graph's "+
+					"timescales (%s)", i, name, strings.Join(g.rangeNames(), ", "))
+			}
+		}
+	}
+
 	now := time.Now()
 	seen := make(map[string]bool, len(g.Ranges))
 	for i := range g.Ranges {
@@ -534,13 +574,20 @@ func (g *Graph) normalise(d Defaults, res, every time.Duration) error {
 			if err != nil {
 				return fmt.Errorf("range %q: peak_step: %w", r.Name, err)
 			}
-			if span/peak > maxSubqueryPoints {
-				return fmt.Errorf("range %q: peaking over %s every %s is %d points per series, "+
-					"past the %d a source returns for one subquery; widen peak_step",
-					r.Name, span, r.PeakStep, span/peak, maxSubqueryPoints)
-			}
-			if err := g.tooFineFor(res, r.Name, "peak_step", r.PeakStep, peak); err != nil {
-				return err
+			// Only what is still drawn from the subquery is held to its
+			// budget. A series reading a rule instead is reading a maximum
+			// already taken somewhere else, at whatever resolution that took
+			// it, and none of this applies to it.
+			if g.laddersAt(r.Name) {
+				if span/peak > maxSubqueryPoints {
+					return fmt.Errorf("range %q: peaking over %s every %s is %d points per series, "+
+						"past the %d a source returns for one subquery; widen peak_step "+
+						"or give the series a peak_expr",
+						r.Name, span, r.PeakStep, span/peak, maxSubqueryPoints)
+				}
+				if err := g.tooFineFor(res, r.Name, "peak_step", r.PeakStep, peak); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -619,7 +666,7 @@ func (g *Graph) Values(r Range, region, theme, variant string) url.Values {
 		// and fourth colours -- which are named for exactly this -- and the
 		// legend still reads in list order.
 		for _, s := range g.Series {
-			v.Add("target", peakExpr(g.expr(s.Expr, region, r.PeakStep), r.Step, r.PeakStep))
+			v.Add("target", g.peakTarget(s, r, region))
 			v.Add("legend", peakLegend(s.Legend))
 		}
 		// Drawing them first puts them behind, so a peak shows only where it
@@ -703,8 +750,56 @@ func (g *Graph) expr(e, region, step string) string {
 // timescale, which is what makes the resolution floor below worth checking.
 func (g *Graph) usesStep() bool {
 	for _, s := range g.Series {
-		if strings.Contains(s.Expr, "$"+stepPlaceholder) ||
-			strings.Contains(s.Expr, "${"+stepPlaceholder+"}") {
+		if hasStep(s.Expr) || hasStep(s.PeakExpr) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasStep(e string) bool {
+	return strings.Contains(e, "$"+stepPlaceholder) ||
+		strings.Contains(e, "${"+stepPlaceholder+"}")
+}
+
+// peakTarget is what a peak trace is drawn from: the series' own expression
+// when it names one for this timescale, and otherwise the average reduced to
+// the highest sample in each bucket.
+func (g *Graph) peakTarget(s Series, r Range, region string) string {
+	if !s.peaksAt(r.Name) {
+		return peakExpr(g.expr(s.Expr, region, r.PeakStep), r.Step, r.PeakStep)
+	}
+	// Given whole, and given the bucket rather than the peak step: what it
+	// reads has already taken its maximum at the resolution it was recorded
+	// at, and a subquery over that would step over the maxima in between --
+	// sampling a five-minute rule every forty minutes keeps one value in
+	// eight and discards the other seven, which is the opposite of a peak.
+	return g.expr(s.PeakExpr, region, r.Step)
+}
+
+// laddersAt reports whether any series still takes its peak from the subquery
+// over its average at this timescale, which is what the ladder's budget is
+// spent on.
+func (g *Graph) laddersAt(name string) bool {
+	for _, s := range g.Series {
+		if !s.peaksAt(name) {
+			return true
+		}
+	}
+	return false
+}
+
+// peaksAt reports whether this series draws its peak from PeakExpr at the
+// named timescale.
+func (s Series) peaksAt(name string) bool {
+	if s.PeakExpr == "" {
+		return false
+	}
+	if len(s.PeakRanges) == 0 {
+		return true
+	}
+	for _, r := range s.PeakRanges {
+		if r == name {
 			return true
 		}
 	}

@@ -129,6 +129,22 @@ graphs:
     series:
       - expr: sum(rate(nginx_http_requests_total{region="$region"}[$step]))
         legend: requests
+        # The peak ladder runs out of budget at the long end: a year of
+        # ten-second samples is three million points per series, so the yearly
+        # graph peaks at the monthly graph's step and a short burst arrives
+        # flattened by it. A recording rule takes that maximum once, at the
+        # source's own resolution, and this reads it back whole:
+        #
+        #   record: region:nginx_http_requests:peak30s
+        #   expr: max_over_time(
+        #           (sum by (region) (rate(nginx_http_requests_total[30s])))[5m:30s])
+        #
+        # $step is the bucket here, not the samples inside it -- what the rule
+        # holds is already a maximum, and a subquery over it would step past
+        # the maxima it exists to keep. peak_ranges leaves the fine end on the
+        # ladder, where it already reads at the source's own resolution.
+        peak_expr: max_over_time(region:nginx_http_requests:peak30s{region="$region"}[$step])
+        peak_ranges: [1w, 1m, 1y]
 
   # A graph that exists in one place only. Without this it would be drawn for
   # every region, and the ones with nothing to show would be left off the

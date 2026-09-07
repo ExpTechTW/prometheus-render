@@ -327,6 +327,26 @@ whole reason it is worth drawing a second trace. Peaking at its own step
 instead puts one sample in each bucket and draws a peak identical to the
 average behind it.
 
+The ladder runs out of budget at the long end. A year of ten-second samples is
+three million points per series, so the yearly graph peaks at the monthly
+graph's step, and a five-second burst reaches that trace hundreds of times
+smaller than it was. `peak_expr` draws it from somewhere else instead -- a
+recording rule that took the maximum once, at the source's own resolution:
+
+```yaml
+series:
+  - expr: sum(rate(nginx_http_bytes_total[$step])) * 8 / 1e6
+    peak_expr: max_over_time(nginx:bytes:peak30s[$step]) * 8 / 1e6
+    peak_ranges: [1w, 1m, 1y]   # omit for every timescale
+```
+
+`$step` is the bucket there rather than the samples inside it: what the rule
+holds is already a maximum, and a subquery over it would step past the maxima
+it exists to keep. `peak_ranges` leaves the fine end on the ladder, where it
+already reads at the source's own resolution and has nothing to gain. A
+timescale drawn this way is not held to the subquery budget, because it no
+longer asks for one.
+
 One query feeds all four images: a palette and a peak trace change how samples
 are drawn, not which are read.
 
